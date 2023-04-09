@@ -8,3 +8,4 @@ int s21_strcmp(const char *str1, const char *str2);
 int s21_strncmp(const char *str1, const char *str2, size_t n);
 
 char *s21_strpbrk(const char *str1, const char *str2);
+char *s21_strrchr(const char *str, int c);

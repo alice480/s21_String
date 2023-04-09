@@ -1,10 +1,10 @@
 #include "string.h"
 
 int main() {
-  char str1[1024]= "1236at";
-  char str2[1024]= "rt";
-  if (s21_strpbrk(str1, str2))
-    printf("%s\n", s21_strpbrk(str1, str2));
+  char str1[1024]= "1236atay";
+  //char str2[1024]= "rt";
+  if (s21_strrchr(str1, '1'))
+    printf("%s\n", s21_strrchr(str1, '1'));
   else
     printf("NULL\n");
 }
@@ -60,3 +60,8 @@ char *s21_strpbrk(const char *str1, const char *str2) {
   return (j < strlen(str1)) ? (char *)str1 + j : NULL;
 }
 
+char *s21_strrchr(const char *str, int c) {
+  int i;
+  for (i = strlen(str) - 1; i != -1 && str[i] != c; i--) {};
+  return (i != -1) ? (char*)str + i : NULL;
+}

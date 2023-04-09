@@ -3,8 +3,8 @@
 int main() {
   char str1[1024]= "1236atay";
   //char str2[1024]= "rt";
-  if (s21_strrchr(str1, '1'))
-    printf("%s\n", s21_strrchr(str1, '1'));
+  if (s21_strstr(str1, "123"))
+    printf("%s\n", s21_strstr(str1, "123"));
   else
     printf("NULL\n");
 }
@@ -64,4 +64,18 @@ char *s21_strrchr(const char *str, int c) {
   int i;
   for (i = strlen(str) - 1; i != -1 && str[i] != c; i--) {};
   return (i != -1) ? (char*)str + i : NULL;
+}
+
+// change find to FALSE
+char *s21_strstr(const char *haystack, const char *needle) {
+  int find = 0;
+  size_t i = 0;
+  for (i = 0; haystack[i] && !find; i++) {
+    if (haystack[i] == needle[0]) {
+      size_t j;
+      for (j = 0; needle[j] && haystack[i + j] == needle[j]; j++);
+      find = (j == strlen(needle)) ? 1 : 0;
+    }
+  }
+  return (find) ? (char*)haystack + (i - 1) : NULL;
 }

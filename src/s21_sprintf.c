@@ -1,1299 +1,668 @@
-#include "s21_string.h"
+#include "./s21_string.h"
 
-#define TOKENS "cdieEfgGosuxXpn"
-char conflicting_char = '.';
+typedef struct {
+  bool minus;
+  bool plus;
+  bool space;
+  bool hash;
+  bool zero;
+} flags;
 
-void process_string(va_list ap, params *variable, char *s, int *top);
-void process_x(va_list ap, params *variable, long unsigned int v_x, char *array,
-               int *top, const char *format);
-void process_g(va_list ap, params *variable, long double v_e, char *array,
-               int *top, const char *format_pointer);
-void process_float(va_list ap, params *variable, long double v_f, char *array,
-                   int *top);
-void process_exp(va_list ap, params *variable, long double v_e, char *array,
-                 int *top, const char *format_pointer);
-void process_char(va_list ap, params *variable, char *array, int *top);
-void process_int(va_list ap, params *variable, char *array, int *top,
-                 const char *gen_pointer);
-void process_oct(va_list ap, params *variable, char *array, int *top);
-void process_p(va_list ap, params *variable, int *v_p, char *array, int *top);
-void write_into_main_buf(const char *temp, char *main_buf, int *top, int count,
-                         int flag, int hex_flag, int sign);
-void align_left(char *main_buf, int *top, int len, int fill, params *variable,
-                const char *temp);
-int add_zero(char **temp, char *main_buf, int *top, int len, params *variable,
-             int *shift);
-void add_space(const char *temp, char *main_buf, int *top, int len,
-               params *variable);
-int parse_params(const char *str_pointer, params *variable, int *shift);
-void init_struct(params *res);
-char *s21_itoa(long int num);
-char *oct_to_string(long int num, params *variable);
-void delete_zero(char *g_string, int *top);
-char *hex_to_string(unsigned long int num, int upper_flag, int pointer_flag,
-                    int nil_flag);
-char *float_to_string(long double num, int g_flag, params *variable);
-char *exp_to_string(long double v_e, const char *exp_letter, int g_flag,
-                    params *variable);
-int check_fraction(int *top, params *variable, long double num);
-int check_precision(params *variable, int expo);
-int add_precision_zero(char **temp, char *main_buf, int *top, params *variable,
-                       int flag_x, int *shift);
-void add_space_precision_zero(char *temp, char *main_buf, int *top,
-                              params *variable);
-int find_exp(long double num);
-void long_char_helper(wchar_t *long_str, params *variable, char *s, int *top);
-void null_helper(params *variable, char *s, int *top);
-void normal_string_helper(char *simple_str, params *variable, char *s,
-                          int *top);
+typedef struct {
+  flags fl;
+  int width;
+  int precision;
+  char length;
+  char specifier;
+  bool error;
+  bool has_precision;
+} arguments;
 
-int s21_sprintf(char *s, const char *format, ...) {
-  int top_buffer = 0;
-  const char *gen_pointer = S21_NULL;
-  int stop_flag = 0;
-  long double v_e = 0;
-  long double v_f = 0;
-  int *v_p = S21_NULL;
-  long unsigned int v_x = 0;
-  params variable;
+bool is_digit(const char ch) { return ch >= '0' && ch <= '9'; };
 
-  va_list ap;
-  va_start(ap, format);
-  for (gen_pointer = format; *gen_pointer; gen_pointer++) {
-    int shift;
-    if ((*gen_pointer) != '%') {
-      s[top_buffer] = *gen_pointer;
-      top_buffer++;
+bool is_flag(const char ch) {
+  bool ans = 0;
+  switch (ch) {
+    case '-':
+    case '+':
+    case ' ':
+    case '#':
+    case '0':
+      ans = 1;
+      break;
+  }
+  return ans;
+}
+
+bool is_specifier(const char ch) {
+  bool ans = 0;
+  switch (ch) {
+    case 'c':
+    case 'd':
+    case 'i':
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'g':
+    case 'G':
+    case 'o':
+    case 's':
+    case 'u':
+    case 'x':
+    case 'X':
+    case 'p':
+    case 'n':
+    case '%':
+      ans = 1;
+      break;
+  }
+  return ans;
+}
+
+int char_to_digit(const char ch) { return is_digit(ch) ? ch - 48 : -1; }
+
+const char *set_flags(const char *format, arguments *arg) {
+  while (is_flag(*format) && !arg->error) {
+    switch (*format) {
+      case '-':
+        if (!arg->fl.zero) {
+          arg->fl.minus = 1;
+        } else {
+          arg->error = 1;
+          // puts("Error: conflicts flags '-' and '0'");
+        }
+        break;
+      case '+':
+        if (!arg->fl.space) {
+          arg->fl.plus = 1;
+        } else {
+          arg->error = 1;
+          // puts("Error: conflicts flags '+' and '-'");
+        }
+        break;
+      case ' ':
+        if (!arg->fl.plus) {
+          arg->fl.space = 1;
+        } else {
+          arg->error = 1;
+          // puts("Error: conflicts flags ' ' and '+'");
+        }
+        break;
+      case '#':
+        arg->fl.hash = 1;
+        break;
+      case '0':
+        if (!arg->fl.minus) {
+          arg->fl.zero = 1;
+        } else {
+          arg->error = 1;
+          // puts("Error: conflicts flags '0' and '-'");
+        }
+        break;
+    }
+    format++;
+  }
+  return format;
+}
+
+const char *set_width(const char *format, arguments *arg, va_list factor) {
+  if (*format == '*') {
+    // возможно нужна проверка на int
+    arg->width = va_arg(factor, int);
+    format++;
+  } else if (is_digit(*format)) {
+    int width = 0;
+    while (is_digit(*format)) {
+      width *= 10;
+      width += char_to_digit(*format);
+      format++;
+    }
+    arg->width = width;
+  }
+  return format;
+}
+
+const char *set_precision(const char *format, arguments *arg, va_list factor) {
+  if (*format == '.') {
+    format++;
+    if (*format == '*') {
+      format++;
+      arg->precision = va_arg(factor, int);
+      arg->has_precision = 1;
+    } else if (is_digit(*format)) {
+      int precision = 0;
+      while (is_digit(*format)) {
+        precision *= 10;
+        precision += char_to_digit(*format);
+        format++;
+      }
+      arg->precision = precision;
+      arg->has_precision = 1;
+    } else {
+      // ошибка формата, не задана точность
+      arg->error = 1;
+      // puts("Error: has not precision");
+    }
+  }
+  return format;
+}
+
+const char *set_length(const char *format, arguments *arg) {
+  switch (*format) {
+    case 'h':
+      arg->length = 'h';
+      format++;
+      break;
+    case 'l':
+      arg->length = 'l';
+      format++;
+      break;
+    case 'L':
+      arg->length = 'L';
+      format++;
+      break;
+  }
+  return format;
+}
+
+const char *set_specifier(const char *format, arguments *arg) {
+  if (is_specifier(*format)) {
+    arg->specifier = *format;
+  } else {
+    // ошибка, нет спецификатора
+    arg->error = 1;
+    // puts("Error: has not specifier");
+  }
+  return format;
+}
+
+void num_to_str(int64_t num, char *str_num, int base) {
+  char tmp[SIZE] = {'\0'};
+  int idx = SIZE - 2;
+  bool sign = num < 0 ? 1 : 0;
+  num = sign ? -num : num;
+  if (num == 0) tmp[idx] = '0';
+  while (num > 0) {
+    idx--;
+    tmp[idx] = "0123456789abcdef"[num % base];
+    num /= base;
+  }
+  for (int j = 0; tmp[idx]; idx++, j++) {
+    if (sign && j == 0) {
+      str_num[j++] = '-';
+    }
+    str_num[j] = tmp[idx];
+  }
+}
+
+char *format_char(arguments arg, char *str, char ch) {
+  int width = arg.width;
+  if (!arg.fl.minus && width) {
+    for (int i = 1; i < width; i++) {
+      *str++ = ' ';
+      if (i == width - 1) *str++ = ch;
+    }
+  } else if (width) {
+    str[0] = ch;
+    str++;
+    for (int i = 1; i < width; i++) *str++ = ' ';
+  } else {
+    str[0] = ch;
+    str++;
+  }
+  return str;
+}
+
+char *format_wchar(arguments arg, char *str, wchar_t w_ch) {
+  int width = arg.width;
+  if (!arg.fl.minus && width) {
+    for (int i = 1; i < width; i++) {
+      *str++ = ' ';
+      if (i == width - 1) wcstombs(str++, &w_ch, SIZE);
+    }
+  } else if (width) {
+    wcstombs(str++, &w_ch, SIZE);
+    ;
+    for (int i = 1; i < width; i++) *str++ = ' ';
+  } else {
+    wcstombs(str++, &w_ch, SIZE);
+  }
+  return str;
+}
+
+char *parse_char(arguments arg, char *str, va_list factor) {
+  if (arg.fl.hash || arg.fl.plus || arg.fl.space || arg.fl.zero ||
+      arg.precision) {
+    arg.error = 1;
+    // puts("Error: invalid flag for char");
+  } else if (arg.length == 'l') {
+    wchar_t w_ch = va_arg(factor, wchar_t);
+    str = format_wchar(arg, str, w_ch);
+  } else {
+    char ch = va_arg(factor, int);
+    str = format_char(arg, str, ch);
+  }
+  return str;
+}
+
+void format_precision(char *str_num, arguments arg) {
+  char tmp[SIZE] = {'\0'};
+  int sign = 0;
+  int len = s21_strlen(str_num);
+  if (str_num[0] == '-') {
+    tmp[0] = '-';
+    len--;
+    sign = 1;
+  }
+  if (arg.precision > len) {
+    int i = sign;
+    for (i = sign; i < arg.precision - len + sign; i++) tmp[i] = '0';
+    for (int j = sign; str_num[j]; j++, i++) tmp[i] = str_num[j];
+    s21_strcpy(str_num, tmp);
+  }
+  if (arg.precision == 0 && str_num[0] == '0') str_num[0] = '\0';
+}
+
+void format_flags(char *str_num, arguments arg) {
+  char tmp[SIZE] = {'\0'};
+  if (arg.fl.hash || arg.specifier == 'p') {
+    if ((arg.specifier == 'o' && (int)s21_strlen(str_num) < arg.precision &&
+         arg.has_precision) ||
+        (arg.specifier == 'o' && !arg.has_precision)) {
+      tmp[0] = '0';
+      s21_strcpy(tmp + 1, str_num);
+      s21_strcpy(str_num, tmp);
+    }
+    if (arg.specifier == 'x' || arg.specifier == 'X' || arg.specifier == 'p') {
+      tmp[0] = '0';
+      tmp[1] = arg.specifier == 'p' ? 'x' : arg.specifier;
+      s21_strcpy(tmp + 2, str_num);
+      s21_strcpy(str_num, tmp);
+    }
+  }
+  size_t len = s21_strlen(str_num);
+  size_t width = arg.width;
+  if (width > len) {
+    int delta = width - len;
+    if (!arg.fl.minus) {
+      s21_memset(tmp, arg.fl.zero ? '0' : ' ', delta);
+      s21_strcpy(tmp + delta, str_num);
+    } else {
+      s21_strcpy(tmp, str_num);
+      s21_memset(tmp + len, ' ', delta);
+    }
+    s21_strcpy(str_num, tmp);
+  }
+  bool sign = 0;
+  if (str_num[0] == '-') sign = 1;
+  if (arg.fl.plus) {
+    tmp[0] = sign ? '-' : '+';
+    s21_strcpy(tmp + 1, sign ? str_num + 1 : str_num);
+    s21_strcpy(str_num, tmp);
+  } else if (arg.fl.space && !sign) {
+    tmp[0] = ' ';
+    s21_strcpy(tmp + 1, str_num);
+    s21_strcpy(str_num, tmp);
+  }
+}
+
+char *str_plus_str(char *str, char *str_num) {
+  for (int i = 0; str_num[i]; i++) {
+    *str++ = str_num[i];
+  }
+  return str;
+}
+
+char *parse_int(arguments arg, char *str, va_list factor) {
+  long int num = 0;
+  switch (arg.length) {
+    case 'h':
+      num = (short)va_arg(factor, int);
+      break;
+    case 'l':
+      num = va_arg(factor, long);
+      break;
+    case 0:
+      num = va_arg(factor, int);
+  }
+  char str_num[SIZE] = {'\0'};
+  num_to_str(num, str_num, 10);
+  format_precision(str_num, arg);
+  format_flags(str_num, arg);
+  return str_plus_str(str, str_num);
+}
+
+void double_to_string(long double num, char *str_num, arguments arg) {
+  char buff[SIZE] = {'\0'};
+  int idx = SIZE - 2;
+  bool sign = num < 0 ? 1 : 0;
+  num = sign ? num * -1 : num;
+  long double div = 0;
+  long double mod = modfl(num, &div);
+  if (arg.precision == 0) {
+    div = roundl(num);
+    mod = 0;
+  }
+  char fractions[SIZE] = {'\0'};
+  for (int i = 0; i < arg.precision; i++) {
+    mod *= 10;
+    fractions[i] = (int)mod + '0';
+  }
+  long long right = roundl(mod);
+  long long left = div;
+  if (!right) {
+    for (int i = 0; i < arg.precision; idx--, i++) buff[idx] = '0';
+  } else {
+    for (int i = s21_strlen(fractions); right || i > 0; right /= 10, idx--, i--)
+      buff[idx] = (int)(right % 10 + 0.05) + '0';
+  }
+  if ((arg.has_precision && arg.precision != 0) || (int)mod ||
+      (!arg.has_precision && num == 0) || s21_strlen(fractions))
+    buff[idx--] = '.';
+  if (!left) {
+    buff[idx] = '0';
+    idx--;
+  } else {
+    for (; left; left /= 10, idx--) buff[idx] = (int)(left % 10) + '0';
+  }
+  for (int i = 0; buff[idx + 1]; idx++, i++) {
+    if (sign && i == 0) {
+      str_num[i] = '-';
+      i++;
+    }
+    str_num[i] = buff[idx + 1];
+  }
+}
+
+void normalize_double(long double *num, int *exp, char *exp_sign) {
+  if ((*num) != 0.) {
+    if (fabsl(*num) < 1) {
+      while ((int)(*num) == 0) {
+        (*exp)++;
+        (*num) *= 10;
+      }
+    } else {
+      (*exp_sign) = '+';
+      while ((int)(*num) / 10 != 0) {
+        (*exp)++;
+        (*num) /= 10;
+      }
+    }
+  }
+}
+
+void norm_double_to_sc_not(char *str_num, int exp, char exp_sign,
+                           arguments arg) {
+  int len = s21_strlen(str_num);
+  if (arg.specifier == 'g')
+    arg.specifier = 'e';
+  else if (arg.specifier == 'G')
+    arg.specifier = 'E';
+  str_num[len] = arg.specifier;
+  str_num[len + 1] = exp_sign;
+  str_num[len + 3] = exp % 10 + '0';
+  exp /= 10;
+  str_num[len + 2] = exp % 10 + '0';
+  str_num[len + 4] = '\0';
+}
+
+void remove_zeros(char *str_num) {
+  size_t len = s21_strlen(str_num);
+  if (s21_memchr(str_num, '.', len)) {
+    for (int i = len - 1; i > 0; i--) {
+      if (str_num[i] == '0')
+        str_num[i] = '\0';
+      else
+        break;
+    }
+  }
+}
+
+void remove_point(char *str_num) {
+  size_t len = s21_strlen(str_num);
+  for (int i = len - 1; i > 0; i--) {
+    if (str_num[i] == '.')
+      str_num[i] = '\0';
+    else
+      break;
+  }
+}
+
+void remove_exp(char *str_num, int exp) {
+  if (exp == 0) {
+    size_t len = s21_strlen(str_num);
+    str_num[len - 4] = '\0';
+  }
+}
+
+void remove_end(char *str_num) {
+  remove_zeros(str_num);
+  remove_point(str_num);
+}
+
+void set_gG_size(char *str_num, int new_len) {
+  size_t len = s21_strlen(str_num);
+  int i = len;
+  while ((int)len > new_len) {
+    str_num[i--] = '\0';
+    len--;
+  }
+}
+
+int double_to_sc_notation(long double num, char *str_num, arguments arg) {
+  char exp_sign = (fabsl(num) >= 1 || num == 0.0) ? '+' : '-';
+  int exp = 0;
+  normalize_double(&num, &exp, &exp_sign);
+  double_to_string(num, str_num, arg);
+  if ((arg.specifier == 'g' || arg.specifier == 'G') && !arg.fl.hash)
+    remove_end(str_num);
+  norm_double_to_sc_not(str_num, exp, exp_sign, arg);
+  return exp;
+}
+
+void double_to_gG_format(arguments arg, long double num, char *str_num) {
+  if (arg.precision == 1) arg.precision = 0;
+  // обычное дробое число
+  if (num < 0.) arg.precision++;
+  double_to_string(num, str_num, arg);
+  set_gG_size(str_num, arg.precision);
+  if (!arg.fl.hash) remove_end(str_num);
+  // научная нотация
+  char str_num1[SIZE] = {'\0'};
+  int exp = double_to_sc_notation(num, str_num1, arg);
+  remove_exp(str_num1, exp);
+  // сравнение
+  size_t len = s21_strlen(str_num);
+  size_t len1 = s21_strlen(str_num1);
+  if (len1 < len || arg.precision < 2) s21_strcpy(str_num, str_num1);
+}
+
+char *parse_float(arguments arg, char *str, va_list factor) {
+  long double num = 0;
+  if (!arg.has_precision) arg.precision = 6;
+  if (arg.length == 'L') {
+    num = va_arg(factor, long double);
+  } else {
+    num = va_arg(factor, double);
+  }
+  char str_num[SIZE] = {'\0'};
+  if (arg.specifier == 'f') {
+    double_to_string(num, str_num, arg);
+  } else if (arg.specifier == 'e' || arg.specifier == 'E') {
+    double_to_sc_notation(num, str_num, arg);
+  } else {
+    double_to_gG_format(arg, num, str_num);
+  }
+  format_flags(str_num, arg);
+  return str_plus_str(str, str_num);
+}
+
+void format_string(arguments arg, char *str, char *sstr) {
+  char tmp[SIZE] = {'\0'};
+  s21_strcpy(tmp, sstr);
+  if (arg.has_precision) tmp[arg.precision] = '\0';
+  int len = s21_strlen(tmp);
+  int delta = arg.width - len;
+
+  if (arg.fl.minus && delta > 0) {
+    s21_strcpy(str, tmp);
+    s21_memset(str + len, ' ', delta);
+  } else if (delta > 0) {
+    s21_memset(str, ' ', delta);
+    s21_strcpy(str + delta, tmp);
+  } else {
+    s21_strcpy(str, tmp);
+  }
+}
+
+void format_wstring(arguments arg, char *str, wchar_t *wstr) {
+  char tmp[SIZE] = {'\0'};
+  wcstombs(tmp, wstr, SIZE);
+  if (arg.has_precision) tmp[arg.precision] = '\0';
+  int len = s21_strlen(tmp);
+  int delta = arg.width - len;
+  if (arg.fl.minus && delta > 0) {
+    s21_strcpy(str, tmp);
+    s21_memset(str + len, ' ', delta);
+  } else if (delta > 0) {
+    s21_memset(str, ' ', delta);
+    s21_strcpy(str + delta, tmp);
+  } else {
+    s21_strcpy(str, tmp);
+  }
+}
+
+char *parse_string(arguments arg, char *str, va_list factor) {
+  char tmp_str[SIZE] = {'\0'};
+  if (arg.length == 'l') {
+    wchar_t *wstr = va_arg(factor, wchar_t *);
+    format_wstring(arg, tmp_str, wstr);
+  } else {
+    char *sstr = va_arg(factor, char *);
+    format_string(arg, tmp_str, sstr);
+  }
+  str = str_plus_str(str, tmp_str);
+  return str;
+}
+
+char *parse_unsigned(arguments arg, char *str, va_list factor) {
+  uint64_t num = va_arg(factor, uint64_t);
+  switch (arg.length) {
+    case 'h':
+      num = (uint16_t)num;
+      break;
+    case 'l':
+      num = (uint64_t)num;
+      break;
+    case 0:
+      num = (uint32_t)num;
+      break;
+  }
+  char str_num[SIZE] = {'\0'};
+  num_to_str(num, str_num, 10);
+  format_precision(str_num, arg);
+  format_flags(str_num, arg);
+  str = str_plus_str(str, str_num);
+  return str;
+}
+
+char *parse_octal(arguments arg, char *str, va_list factor) {
+  char str_num[SIZE] = {'\0'};
+  unsigned int num = va_arg(factor, unsigned int);
+  num_to_str(num, str_num, 8);
+  format_precision(str_num, arg);
+  format_flags(str_num, arg);
+  str = str_plus_str(str, str_num);
+  return str;
+}
+
+void *to_upper(char *str) {
+  for (int i = 0; str[i]; i++)
+    str[i] = (str[i] >= 97 && str[i] <= 122) ? str[i] - 32 : str[i];
+  return str;
+}
+
+char *parse_hex(arguments arg, char *str, va_list factor) {
+  uint64_t num = va_arg(factor, uint64_t);
+  switch (arg.length) {
+    case 0:
+      num = (uint32_t)num;
+      break;
+    case 'h':
+      num = (uint16_t)num;
+      break;
+    case 'l':
+      num = (uint64_t)num;
+      break;
+  }
+  char str_num[SIZE] = {'\0'};
+  num_to_str(num, str_num, 16);
+  if (arg.specifier == 'X') to_upper(str_num);
+  format_precision(str_num, arg);
+  format_flags(str_num, arg);
+  str = str_plus_str(str, str_num);
+  return str;
+}
+
+char *parse_pointer(arguments arg, char *str, va_list factor) {
+  uint64_t num = va_arg(factor, uint64_t);
+  char str_num[SIZE] = {'\0'};
+  num_to_str(num, str_num, 16);
+  format_precision(str_num, arg);
+  format_flags(str_num, arg);
+  str = str_plus_str(str, str_num);
+  return str;
+}
+
+char *parse_value(arguments arg, char *str, va_list factor) {
+  char specifier = arg.specifier;
+  if (specifier == 'c')
+    str = parse_char(arg, str, factor);
+  else if (specifier == 'd' || specifier == 'i')
+    str = parse_int(arg, str, factor);
+  else if (specifier == 'f' || specifier == 'e' || specifier == 'E' ||
+           specifier == 'g' || specifier == 'G')
+    str = parse_float(arg, str, factor);
+  else if (specifier == 's')
+    str = parse_string(arg, str, factor);
+  else if (specifier == 'u')
+    str = parse_unsigned(arg, str, factor);
+  else if (specifier == 'o')
+    str = parse_octal(arg, str, factor);
+  else if (specifier == 'x' || specifier == 'X')
+    str = parse_hex(arg, str, factor);
+  else if (specifier == 'p')
+    str = parse_pointer(arg, str, factor);
+  else if (specifier == '%')
+    *str++ = '%';
+  return str;
+}
+
+int s21_sprintf(char *str, const char *format, ...) {
+  char *tmp_str = str;
+  va_list factor = {0};
+  va_start(factor, format);
+  while (*format) {
+    if (*format != '%') {
+      *str++ = *format++;
       continue;
     } else {
-      shift = 0;
-      init_struct(&variable);
-      stop_flag = parse_params(gen_pointer, &variable, &shift);
-    }
-    if (!stop_flag) {
-      gen_pointer += shift;
-      if (s21_strchr("diu", (int)(*gen_pointer))) {
-        process_int(ap, &variable, s, &top_buffer, gen_pointer);
-      } else if (*gen_pointer == 'c') {
-        process_char(ap, &variable, s, &top_buffer);
-      } else if (*gen_pointer == 'E' || *gen_pointer == 'e') {
-        process_exp(ap, &variable, v_e, s, &top_buffer, gen_pointer);
-      } else if (*gen_pointer == 'f') {
-        process_float(ap, &variable, v_f, s, &top_buffer);
-      } else if (*gen_pointer == 'G' || *gen_pointer == 'g') {
-        process_g(ap, &variable, v_e, s, &top_buffer, gen_pointer);
-      } else if (*gen_pointer == 'o') {
-        process_oct(ap, &variable, s, &top_buffer);
-      } else if (*gen_pointer == 's') {
-        process_string(ap, &variable, s, &top_buffer);
-      } else if (*gen_pointer == 'x' || *gen_pointer == 'X') {
-        process_x(ap, &variable, v_x, s, &top_buffer, gen_pointer);
-      } else if (*gen_pointer == 'p') {
-        variable.hash_zero = 1;
-        process_p(ap, &variable, v_p, s, &top_buffer);
-      } else if (*gen_pointer == 'n') {
-        int *bytes_num = S21_NULL;
-        bytes_num = va_arg(ap, int *);
-        *bytes_num = top_buffer;
-      } else {
-        s[top_buffer] = *gen_pointer;
-        top_buffer++;
+      format++;
+      arguments arg = {0};
+      format = set_flags(format, &arg);
+      format = set_width(format, &arg, factor);
+      format = set_precision(format, &arg, factor);
+      format = set_length(format, &arg);
+      format = set_specifier(format, &arg);
+      str = parse_value(arg, str, factor);
+      if (arg.specifier == 'n') {
+        int *num = va_arg(factor, int *);
+        (*num) = str - tmp_str;
       }
     }
-  }
-  s[top_buffer] = '\0';
-  va_end(ap);
-  return s21_strlen(s);
-}
-
-void process_p(va_list ap, params *variable, int *v_p, char *array, int *top) {
-  int zero_flag = 0;
-  if (variable->star_width == 1) {
-    variable->width = va_arg(ap, int);
-  }
-  v_p = va_arg(ap, int *);
-  int nil_flag = 0;
-  long long int convert = 0;
-  if (v_p != S21_NULL) {
-    convert = (long long int)v_p;
-  } else {
-    nil_flag = 1;
-  }
-  char *temp = hex_to_string(convert, 0, variable->hash_zero, nil_flag);
-  if (variable->width > 0 && variable->align_minus == 0) {
-    add_space(temp, array, top, (int)s21_strlen(temp), variable);
-  }
-  write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0, 0);
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  free(temp);
-}
-
-void process_oct(va_list ap, params *variable, char *array, int *top) {
-  int zero_flag = 0;
-  long int v_int;
-  if (variable->star_width == 1) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  if (variable->len_h == 1) {
-    v_int = va_arg(ap, int);
-  } else if (variable->len_l == 1) {
-    v_int = va_arg(ap, long int);
-  } else {
-    v_int = va_arg(ap, int);
-  }
-  v_int = (long int)v_int;
-  if (variable->precision_num > 0) {
-    char *temp_ar = oct_to_string(v_int, variable);
-    int size_helper = (variable->hash_zero > 0) ? (s21_strlen(temp_ar) - 1)
-                                                : s21_strlen(temp_ar);
-    variable->precision_zero = (variable->precision_num - size_helper > 0)
-                                   ? (variable->precision_num - size_helper)
-                                   : 0;
-    free(temp_ar);
-  }
-  int temp_shift = 0;
-  char *temp = oct_to_string(v_int, variable);
-  if (variable->precision_zero) {
-    if (variable->width > 0 && variable->align_minus == 0) {
-      add_space_precision_zero(temp, array, top, variable);
-    }
-    zero_flag = add_precision_zero(&temp, array, top, variable, 0, &temp_shift);
-  } else if (variable->direct_zero) {
-    zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                         &temp_shift);
-  } else if (variable->width > 0 && variable->align_minus == 0) {
-    add_space(temp, array, top, (int)s21_strlen(temp), variable);
-  }
-  write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0, 0);
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  free(temp - temp_shift);
-}
-
-char *oct_to_string(long int num, params *variable) {
-  char *res = malloc(sizeof(char) * 50);
-  if (!res) exit(0);
-  char *reverse = malloc(sizeof(char) * 50);
-  if (!reverse) {
-    free(res);
-    exit(0);
-  }
-  int count = 0;
-  int sign = (num >= 0) ? 0 : 1;
-  if (num == 0) {
-    reverse[count] = '0';
-    count++;
-  }
-  if (!sign) {
-    int i = 0;
-    long int next = 1;
-    long int octanum = 0;
-    while (num != 0) {
-      octanum = octanum + (num % 8) * next;
-      num = num / 8;
-      next = next * 10;
-    }
-    while (octanum > 0) {
-      next = octanum % 10;
-      reverse[count] = next + '0';
-      count++;
-      octanum /= 10;
-    }
-    if (variable->hash_zero) {
-      reverse[count] = '0';
-      count++;
-    }
-    for (; i < count; i++) {
-      res[i] = reverse[count - i - 1];
-    }
-    res[i] = '\0';
-  } else {
-    res[0] = '\0';
-  }
-  free(reverse);
-  return res;
-}
-
-void process_string(va_list ap, params *variable, char *s, int *top) {
-  char *simple_str = S21_NULL;
-  wchar_t *long_str = S21_NULL;
-  if (variable->star_width) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->len_l == 1) {
-    long_str = va_arg(ap, wchar_t *);
-    if (!long_str) {
-      variable->len_l = 0;
-    }
-  } else {
-    simple_str = va_arg(ap, char *);
-  }
-  if (variable->len_l == 1) {
-    long_char_helper(long_str, variable, s, top);
-  } else {
-    if (!simple_str) {
-      null_helper(variable, s, top);
-    } else {
-      normal_string_helper(simple_str, variable, s, top);
-    }
-  }
-}
-
-void normal_string_helper(char *simple_str, params *variable, char *s,
-                          int *top) {
-  char reserve[1000] = {'\0'};
-  s21_strcpy(reserve, simple_str);
-  int len = (int)s21_strlen(reserve);
-  if ((variable->precision_num > 0) && (variable->precision_num < len)) {
-    reserve[variable->precision_num] = '\0';
-    variable->width -= variable->precision_num;
-  } else if (variable->precision_num != 0) {
-    variable->width -= len;
-  }
-  if ((variable->width > 0) && (variable->align_minus == 0)) {
-    for (int k = 0; k < variable->width; k++) {
-      s[*top] = ' ';
-      *top = (*top) + 1;
-    }
-  }
-  if (variable->precision_num != 0) {
-    for (int i = 0; i < (int)s21_strlen(reserve); i++) {
-      s[*top] = reserve[i];
-      *top = (*top) + 1;
-    }
-  }
-  if ((variable->width > 0) && (variable->align_minus == 1)) {
-    for (int m = 0; m < variable->width; m++) {
-      s[*top] = ' ';
-      *top = (*top) + 1;
-    }
-  }
-  s[*top] = '\0';
-}
-
-void long_char_helper(wchar_t *long_str, params *variable, char *s, int *top) {
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  int len = wcslen(long_str);
-  int bytes_helper = sizeof(long_str[0]);
-  int size_helper = wcstombs(s + (*top), long_str, len * bytes_helper);
-  if (variable->precision_num) {
-    if (variable->align_minus == 0 && variable->width > size_helper) {
-      int space_var = variable->width - variable->precision_num;
-      if (space_var > 0) {
-        for (int i = 0; i < space_var; i++) {
-          s[*top] = ' ';
-          *top += 1;
-        }
-      }
-    }
-  } else {
-    if (variable->align_minus == 0 && variable->width > size_helper) {
-      for (int i = 0; i < (variable->width - size_helper); i++) {
-        s[*top] = ' ';
-        *top += 1;
-      }
-    }
-  }
-  if (variable->precision_num) {
-    size_helper = (variable->precision_num < size_helper)
-                      ? variable->precision_num
-                      : size_helper;
-  }
-  size_helper = wcstombs(s + (*top), long_str, size_helper);
-  *top += size_helper;
-  if (variable->align_minus == 1 && variable->width > size_helper) {
-    if (variable->precision_num > size_helper) {
-      int space = variable->width - variable->precision_num;
-      if (space > 0) {
-        for (int i = 0; i < space; i++) {
-          s[*top] = ' ';
-          *top += 1;
-        }
-      }
-    } else {
-      for (int i = 0; i < (variable->width - size_helper); i++) {
-        s[*top] = ' ';
-        *top += 1;
-      }
-    }
-  }
-}
-
-void null_helper(params *variable, char *s, int *top) {
-  char null_str[7] = "(null)";
-  int len = (int)s21_strlen(null_str);
-  char reserve_buf[10] = {'\0'};
-  if ((variable->precision_num > 0) && (variable->precision_num < len)) {
-    for (int i = 0; i < variable->precision_num; i++) {
-      reserve_buf[i] = null_str[i];
-    }
-    variable->width -= variable->precision_num;
-  } else if (variable->precision_num != 0) {
-    for (int j = 0; j < len; j++) {
-      reserve_buf[j] = null_str[j];
-    }
-    variable->width -= len;
-  }
-  if ((variable->width > 0) && (variable->align_minus == 0)) {
-    for (int k = 0; k < variable->width; k++) {
-      s[*top] = ' ';
-      *top = (*top) + 1;
-    }
-  }
-  for (int l = 0; l < (int)s21_strlen(reserve_buf); l++) {
-    s[*top] = reserve_buf[l];
-    *top = (*top) + 1;
-  }
-  if ((variable->width > 0) && (variable->align_minus == 1)) {
-    for (int m = 0; m < variable->width; m++) {
-      s[*top] = ' ';
-      *top = (*top) + 1;
-    }
-  }
-  s[*top] = '\0';
-}
-
-void process_x(va_list ap, params *variable, long unsigned int v_x, char *array,
-               int *top, const char *format) {
-  int zero_flag = 0;
-  if (variable->star_width == 1) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  if (variable->len_h == 1) {
-    v_x = va_arg(ap, int);
-  } else if (variable->len_l == 1) {
-    v_x = va_arg(ap, long int);
-  } else {
-    v_x = va_arg(ap, int);
-  }
-  v_x = (long int)v_x;
-  int flag = (*format == 'X') ? 1 : 0;
-  if (variable->precision_num > 0) {
-    char *temp_ar = hex_to_string(v_x, flag, variable->hash_zero, 0);
-    int len_helper = s21_strlen(temp_ar);
-    int size_helper = (variable->hash_zero > 0) ? len_helper - 2 : len_helper;
-    variable->precision_zero = (variable->precision_num - size_helper > 0)
-                                   ? (variable->precision_num - size_helper)
-                                   : 0;
-    free(temp_ar);
-  }
-  int temp_shift = 0;
-  char *temp = hex_to_string(v_x, flag, variable->hash_zero, 0);
-  if (variable->precision_zero) {
-    if (variable->width > 0 && variable->align_minus == 0) {
-      add_space_precision_zero(temp, array, top, variable);
-    }
-    zero_flag = add_precision_zero(&temp, array, top, variable, 1, &temp_shift);
-  } else if (variable->direct_zero) {
-    zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                         &temp_shift);
-  } else if (variable->width > 0 && variable->align_minus == 0) {
-    add_space(temp, array, top, (int)s21_strlen(temp), variable);
-  }
-  int x_flag = (variable->hash_zero > 0) ? 1 : 0;
-  write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag,
-                      x_flag, 0);
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  free(temp - temp_shift);
-}
-
-void process_g(va_list ap, params *variable, long double v_e, char *array,
-               int *top, const char *format_pointer) {
-  char *temp = S21_NULL;
-  if (variable->star_width) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  if (variable->len_double) {
-    v_e = va_arg(ap, long double);
-  } else {
-    v_e = va_arg(ap, double);
-  }
-  int temp_shift = 0;
-  if (v_e >= 0 && variable->show_sign == 1 && variable->width == 0) {
-    array[*top] = '+';
-    *top += 1;
-  }
-  if (v_e > 0 && variable->space_for_pos == 1 && variable->width == 0) {
-    array[*top] = ' ';
-    *top += 1;
-  }
-  if (v_e == 0) {
-    array[*top] = '0';
-    *top += 1;
-  } else {
-    long double pos_v_e = (v_e < 0) ? (v_e * -1) : (v_e);
-    int check_exp = find_exp(pos_v_e);
-    if (variable->dot_check == 1 && variable->precision_num == 0) {
-      variable->precision_num = 1;
-    }
-    int control = check_precision(variable, check_exp);
-    if (control == 1) {
-      if (variable->precision_num == 0 && variable->dot_check == 0) {
-        variable->precision_num = 5;
-      } else if (variable->precision_num > 0) {
-        variable->precision_num = variable->precision_num - 1;
-      }
-      temp = exp_to_string(v_e, format_pointer, 1, variable);
-    } else {
-      if (variable->precision_num == 0 && variable->dot_check == 0) {
-        if (check_exp < 0) {
-          check_exp *= -1;
-          variable->precision_num = (6 - check_exp);
-        } else {
-          variable->precision_num = (6 - (check_exp + 1));
-        }
-      } else if (variable->precision_num == 0 && variable->dot_check == 1) {
-        if (check_exp < 0) check_exp *= -1;
-        variable->precision_num = check_exp;
-      } else if (variable->precision_num > 0) {
-        variable->precision_num = (variable->precision_num - (check_exp + 1));
-      }
-      temp = float_to_string(v_e, 1, variable);
-    }
-    int zero_flag = 0;
-    if (variable->direct_zero) {
-      zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                           &temp_shift);
-    } else if (variable->width > 0 && variable->align_minus == 0) {
-      add_space(temp, array, top, (int)s21_strlen(temp), variable);
-    }
-    write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0,
-                        0);
-  }
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  array[*top] = '\0';
-  free(temp - temp_shift);
-}
-
-int find_exp(long double num) {
-  int res = 0;
-  if (num > 0 && num < 1) {
-    while ((long int)num == 0) {
-      num = num * 10;
-      res++;
-    }
-    res *= -1;
-  } else if (num > 1) {
-    while (num != 0) {
-      num = (long int)num / 10;
-      res++;
-    }
-    res--;
-  }
-  return res;
-}
-
-void process_float(va_list ap, params *variable, long double v_f, char *array,
-                   int *top) {
-  int zero_flag = 0;
-  if (variable->star_width) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  if (variable->len_double) {
-    v_f = va_arg(ap, long double);
-  } else {
-    v_f = va_arg(ap, double);
-  }
-  if (variable->precision_num == 0 && variable->dot_check == 0) {
-    variable->precision_num = 6;
-  } else if (variable->precision_num == 0 && variable->dot_check == 1) {
-    variable->precision_num = 0;
-  }
-  if (v_f > 0 && variable->show_sign == 1 && variable->width == 0) {
-    array[*top] = '+';
-    *top += 1;
-  }
-  if (v_f >= 0 && variable->space_for_pos == 1 && variable->width == 0) {
-    array[*top] = ' ';
-    *top += 1;
-  }
-  int temp_shift = 0;
-  char *temp = float_to_string(v_f, 0, variable);
-  if (variable->direct_zero == 1) {
-    zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                         &temp_shift);
-  } else if (variable->width > 0) {
-    add_space(temp, array, top, (int)s21_strlen(temp), variable);
-  }
-  write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0, 0);
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  free(temp - temp_shift);
-}
-
-void process_exp(va_list ap, params *variable, long double v_e, char *array,
-                 int *top, const char *format_pointer) {
-  int zero_flag = 0;
-  if (variable->star_width) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->precision_num == -1) variable->precision_num = 0;
-  if (variable->len_double) {
-    v_e = va_arg(ap, long double);
-  } else {
-    v_e = va_arg(ap, double);
-  }
-  if (variable->dot_check == 1 && variable->precision_num == 0) {
-    variable->precision_num = 0;
-  } else if (variable->precision_num == 0 && variable->dot_check == 0) {
-    variable->precision_num = 6;
-  }
-  if (v_e > 0 && variable->show_sign == 1 && variable->width == 0) {
-    array[*top] = '+';
-    *top += 1;
-  }
-  if (v_e >= 0 && variable->space_for_pos == 1 && variable->width == 0) {
-    array[*top] = ' ';
-    *top += 1;
-  }
-  int temp_shift = 0;
-  char *temp = exp_to_string(v_e, format_pointer, 0, variable);
-  if (variable->direct_zero) {
-    zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                         &temp_shift);
-  } else if (variable->width > 0 && variable->align_minus == 0) {
-    add_space(temp, array, top, (int)s21_strlen(temp), variable);
-  }
-  write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0, 0);
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp), variable->width, variable,
-               temp);
-  }
-  free(temp - temp_shift);
-}
-
-void process_char(va_list ap, params *variable, char *array, int *top) {
-  unsigned char v_char;
-  wchar_t long_char;
-  if (variable->star_width == 1) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision == 1) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->len_l == 1) {
-    long_char = va_arg(ap, wchar_t);
-  } else {
-    v_char = (unsigned char)va_arg(ap, int);
-  }
-  if (variable->len_l == 1) {
-    wchar_t temp[2];
-    temp[0] = long_char;
-    temp[1] = '\0';
-    int size_helper = sizeof(temp[0]);
-    int add_size = wcstombs(array + (*top), temp, size_helper);
-    if (variable->align_minus == 0 && variable->width > add_size) {
-      for (int i = 0; i < (variable->width - add_size); i++) {
-        array[*top] = ' ';
-        *top += 1;
-      }
-    }
-    add_size = wcstombs(array + (*top), temp, size_helper);
-    *top += add_size;
-    if (variable->align_minus == 1 && variable->width > add_size) {
-      for (int i = 0; i < (variable->width - add_size); i++) {
-        array[*top] = ' ';
-        *top += 1;
-      }
-    }
-  } else {
-    if (variable->align_minus == 0 && variable->width > 1) {
-      for (int i = 0; i < (variable->width - 1); i++) {
-        array[*top] = ' ';
-        *top += 1;
-      }
-    }
-    array[*top] = v_char;
-    *top += 1;
-    if (variable->align_minus == 1 && variable->width > 1) {
-      for (int i = 0; i < (variable->width - 1); i++) {
-        array[*top] = ' ';
-        *top += 1;
-      }
-    }
-    array[*top] = '\0';
-  }
-}
-
-void process_int(va_list ap, params *variable, char *array, int *top,
-                 const char *gen_pointer) {
-  long int v_int = 0;
-  if (variable->star_width == 1) {
-    variable->width = va_arg(ap, int);
-  }
-  if (variable->star_precision) {
-    variable->precision_num = va_arg(ap, int);
-  }
-  if (variable->len_h == 1) {
-    v_int = ((*gen_pointer) == 'u')
-                ? (unsigned short int)va_arg(ap, unsigned int)
-                : (short int)va_arg(ap, int);
-  } else if (variable->len_l == 1) {
-    v_int = ((*gen_pointer) == 'u') ? va_arg(ap, unsigned long int)
-                                    : va_arg(ap, long int);
-  } else if ((*gen_pointer) == 'u') {
-    v_int = va_arg(ap, unsigned int);
-  } else {
-    v_int = va_arg(ap, int);
-  }
-  if ((*gen_pointer) == 'u') {
-    variable->space_for_pos = 0;
-    variable->show_sign = 0;
-  }
-  char *temp = s21_itoa(v_int);
-  int temp_shift = 0;
-  int sign = (v_int < 0) ? 1 : 0;
-  if (v_int == 0 && variable->precision_num == 0) {
-    array[*top] = '\0';
-  } else {
-    if (variable->precision_num == -1) variable->precision_num = 0;
-    if (variable->precision_num > 0) {
-      char *temp_ar = s21_itoa(v_int);
-      int size_helper =
-          (temp_ar[0] == '-') ? s21_strlen(temp_ar + 1) : s21_strlen(temp_ar);
-      variable->precision_zero = (variable->precision_num - size_helper > 0)
-                                     ? (variable->precision_num - size_helper)
-                                     : 0;
-      free(temp_ar);
-    }
-    if (v_int > 0 && variable->show_sign == 1 && variable->width == 0 &&
-        variable->precision_zero == 0) {
-      array[*top] = '+';
-      *top += 1;
-    }
-    if (v_int >= 0 && variable->space_for_pos == 1 && variable->width == 0) {
-      array[*top] = ' ';
-      *top += 1;
-    }
-    int zero_flag = 0;
-    if (variable->precision_zero) {
-      if (variable->width > 0 && variable->align_minus == 0) {
-        add_space_precision_zero(temp, array, top, variable);
-      }
-      zero_flag =
-          add_precision_zero(&temp, array, top, variable, 0, &temp_shift);
-      if (temp_shift) sign = 0;
-    } else if (variable->direct_zero) {
-      zero_flag = add_zero(&temp, array, top, (int)s21_strlen(temp), variable,
-                           &temp_shift);
-      if (temp_shift) sign = 0;
-    } else if (variable->width > 0) {
-      add_space(temp, array, top, (int)s21_strlen(temp), variable);
-    }
-    write_into_main_buf(temp, array, top, (int)s21_strlen(temp), zero_flag, 0,
-                        sign);
-  }
-  if (variable->align_minus) {
-    align_left(array, top, (int)s21_strlen(temp) + variable->precision_zero,
-               variable->width, variable, temp);
-  }
-  array[*top] = '\0';
-  free(temp - temp_shift);
-}
-
-int add_precision_zero(char **temp, char *main_buf, int *top, params *variable,
-                       int flag_x, int *shift) {
-  int count = 0;
-  if ((variable->width == 0) || (variable->align_minus == 1)) {
-    if (((*temp)[0] != '-') && (variable->space_for_pos == 1)) {
-      main_buf[*top] = ' ';
-      *top += 1;
-    } else if (((*temp)[0] != '-') && (variable->show_sign == 1)) {
-      main_buf[*top] = '+';
-      *top += 1;
-    }
-  }
-  if (variable->precision_zero > 0 && flag_x == 0) {
-    if ((*temp)[0] == '-') {
-      main_buf[*top] = '-';
-      *top += 1;
-      for (int i = 0; i < variable->precision_zero; i++) {
-        main_buf[*top] = '0';
-        *top += 1;
-        count++;
-      }
-      (*temp) += 1;
-      (*shift) += 1;
-    } else {
-      for (int i = 0; i < variable->precision_zero; i++) {
-        main_buf[*top] = '0';
-        *top += 1;
-      }
-    }
-  }
-  if (variable->precision_zero > 0 && flag_x == 1) {
-    if (variable->hash_zero) {
-      main_buf[*top] = '0';
-      *top += 1;
-      main_buf[*top] = 'x';
-      *top += 1;
-    }
-    for (int i = 0; i < variable->precision_zero; i++) {
-      main_buf[*top] = '0';
-      *top += 1;
-      count++;
-    }
-  }
-  return count;
-}
-
-void write_into_main_buf(const char *temp, char *main_buf, int *top, int count,
-                         int flag, int hex_flag, int sign) {
-  int i = 0;
-  if (flag) {
-    if (hex_flag) {
-      i = 2;
-    } else if (sign) {
-      i = 1;
-    }
-  }
-  for (; i < count; i++) {
-    main_buf[*top] = temp[i];
-    *top += 1;
-  }
-  main_buf[*top] = '\0';
-}
-
-void align_left(char *main_buf, int *top, int len, int fill, params *variable,
-                const char *temp) {
-  if (variable->show_sign == 1 && temp[0] != '-') {
-    len++;
-  }
-  if ((variable->space_for_pos == 1) && (temp[0] != '-')) {
-    len++;
-  }
-  if (fill > len) {
-    for (int i = 0; i < (fill - len); i++) {
-      main_buf[*top] = ' ';
-      *top += 1;
-    }
-    main_buf[*top] = '\0';
-  }
-}
-
-int add_zero(char **temp, char *main_buf, int *top, int len, params *variable,
-             int *shift) {
-  int count = 0;
-  if (((*temp)[0] != '-') && (variable->show_sign == 1)) {
-    len++;
-    if (variable->width > 0) {
-      main_buf[*top] = '+';
-      *top += 1;
-    }
-  }
-  if (variable->width > len) {
-    if ((*temp)[0] == '-') {
-      main_buf[*top] = '-';
-      *top += 1;
-      for (int i = 0; i < (variable->width - len); i++) {
-        main_buf[*top] = '0';
-        *top += 1;
-        count++;
-      }
-      (*temp) += 1;
-      (*shift) += 1;
-    } else {
-      for (int i = 0; i < (variable->width - len); i++) {
-        main_buf[*top] = '0';
-        *top += 1;
-      }
-    }
-  }
-  return count;
-}
-
-void add_space_precision_zero(char *temp, char *main_buf, int *top,
-                              params *variable) {
-  int len = 0;
-  if (variable->show_sign == 1 && temp[0] != '-') {
-    len++;
-  }
-  len = variable->width - variable->precision_zero - s21_strlen(temp) - len;
-  if (len > 0) {
-    for (int i = 0; i < len; i++) {
-      main_buf[*top] = ' ';
-      *top += 1;
-    }
-    if ((temp[0] != '-') && (variable->show_sign == 1)) {
-      main_buf[*top] = '+';
-      *top += 1;
-    }
-  } else if ((temp[0] != '-') && (variable->space_for_pos == 1)) {
-    main_buf[*top] = ' ';
-    *top += 1;
-  } else if ((temp[0] != '-') && (variable->show_sign == 1)) {
-    main_buf[*top] = '+';
-    *top += 1;
-  }
-}
-
-void add_space(const char *temp, char *main_buf, int *top, int len,
-               params *variable) {
-  if (variable->align_minus == 0) {
-    if ((temp[0] != '-') && (variable->show_sign == 1)) {
-      len++;
-      if (variable->width <= len) {
-        main_buf[*top] = '+';
-        *top += 1;
-      }
-    }
-    if (variable->width > len) {
-      if (temp[0] == '-') {
-        for (int i = 0; i < (variable->width - len); i++) {
-          main_buf[*top] = ' ';
-          *top += 1;
-        }
-      } else {
-        for (int i = 0; i < (variable->width - len); i++) {
-          main_buf[*top] = ' ';
-          *top += 1;
-        }
-        if (variable->show_sign == 1) {
-          main_buf[*top] = '+';
-          *top += 1;
-        }
-      }
-    } else if ((temp[0] != '-') && (variable->space_for_pos == 1)) {
-      main_buf[*top] = ' ';
-      *top += 1;
-    }
-  } else {
-    if ((temp[0] != '-') && (variable->space_for_pos == 1)) {
-      main_buf[*top] = ' ';
-      *top += 1;
-    } else if ((temp[0] != '-') && (variable->show_sign == 1)) {
-      main_buf[*top] = '+';
-      *top += 1;
-    }
-  }
-}
-
-int parse_params(const char *str_pointer, params *variable, int *shift) {
-  *shift += 1;
-  int local_stop_flag = 0;
-  while (!local_stop_flag) {
-    str_pointer++;
-    if (*str_pointer == '-') {
-      variable->align_minus = 1;
-    } else if (*str_pointer == '+') {
-      variable->show_sign = 1;
-    } else if (*str_pointer == ' ') {
-      variable->space_for_pos = 1;
-    } else if (*str_pointer == '#') {
-      variable->hash_zero = 1;
-    } else if (*str_pointer >= 48 && *str_pointer <= 57) {
-      if (*str_pointer == '0') {
-        if (variable->dot_check == 0) {
-          if (variable->direct_zero == 0 && variable->width == 0) {
-            variable->direct_zero = 1;
-          } else {
-            variable->width = variable->width * 10;
-          }
-        } else {
-          variable->precision_num =
-              (variable->precision_num > 0)
-                  ? (variable->precision_num * 10 + (*str_pointer - '0'))
-                  : ((*str_pointer) - '0');
-        }
-      } else {
-        if (variable->dot_check == 1) {
-          variable->precision_num =
-              (variable->precision_num > 0)
-                  ? (variable->precision_num * 10 + (*str_pointer - '0'))
-                  : ((*str_pointer) - '0');
-        } else {
-          variable->width =
-              (variable->width > 0)
-                  ? ((variable->width * 10) + (*str_pointer - '0'))
-                  : (*str_pointer) - '0';
-        }
-      }
-    } else if ((*str_pointer) == '.' || (*str_pointer) == ',') {
-      variable->dot_check = 1;
-    } else if (*str_pointer == '*') {
-      if (variable->dot_check == 1) {
-        variable->star_precision = 1;
-      } else {
-        variable->star_width = 1;
-      }
-    } else if (*str_pointer == 'h') {
-      variable->len_h = 1;
-    } else if (*str_pointer == 'l') {
-      variable->len_l = 1;
-    } else if (*str_pointer == 'L') {
-      variable->len_double = 1;
-    } else if (s21_strchr(TOKENS, (int)(*str_pointer)) ||
-               (*str_pointer == '%')) {
-      break;
-    } else {
-      local_stop_flag = 1;
-    }
-    *shift += 1;
-  }
-  return local_stop_flag;
-}
-
-void init_struct(params *res) {
-  res->align_minus = 0;
-  res->show_sign = 0;
-  res->space_for_pos = 0;
-  res->hash_zero = 0;
-  res->direct_zero = 0;
-  res->width = 0;
-  res->star_width = 0;
-  res->star_precision = 0;
-  res->dot_check = 0;
-  res->precision_num = -1;
-  res->precision_zero = 0;
-  res->len_h = 0;
-  res->len_l = 0;
-  res->len_double = 0;
-}
-
-char *s21_itoa(long int num) {
-  char *res = malloc(sizeof(char) * 40);
-  if (!res) exit(0);
-  char *reverse = malloc(sizeof(char) * 40);
-  if (!reverse) {
-    free(res);
-    exit(0);
-  }
-  int count = 0;
-  int sign = 0;
-  if (num < 0) {
-    sign = 1;
-    num *= -1;
-  }
-  if (num == 0) {
-    res[count++] = '0';
-    res[count++] = '\0';
-  } else {
-    int i;
-    while (num > 0) {
-      long int next = num % 10;
-      reverse[count++] = '0' + next;
-      num /= 10;
-    }
-    if (sign) {
-      reverse[count++] = '-';
-    }
-    for (i = 0; i < count; i++) {
-      res[i] = reverse[count - i - 1];
-    }
-    res[i] = '\0';
-  }
-  free(reverse);
-  return res;
-}
-
-void delete_zero(char *g_string, int *top) {
-  while (g_string[(*top) - 1] == '0') {
-    g_string[(*top) - 1] = '\0';
-    (*top) -= 1;
-  }
-  if (g_string[(*top) - 1] == conflicting_char) {
-    g_string[(*top) - 1] = '\0';
-    (*top) -= 1;
-  }
-}
-
-char *hex_to_string(unsigned long int num, int upper_flag, int pointer_flag,
-                    int nil_flag) {
-  char *res = malloc(sizeof(char) * 50);
-  if (!res) exit(0);
-  char *reverse = malloc(sizeof(char) * 50);
-  if (!reverse) {
-    free(res);
-    exit(0);
-  }
-  if (num == 0) {
-    if (nil_flag) {
-      for (int i = 0; i < 3; i++) {
-        res[i] = "0x0"[i];
-      }
-      res[3] = '\0';
-    } else {
-      res[0] = '0';
-      res[1] = '\0';
-    }
-  } else {
-    int count = 0;
-    int i = 0;
-    while (num > 0) {
-      long int next = num % 16;
-      if (next > 9) {
-        if (upper_flag) {
-          reverse[count++] = 'A' + next - 10;
-        } else {
-          reverse[count++] = 'a' + next - 10;
-        }
-      } else {
-        reverse[count++] = next + '0';
-      }
-      num /= 16;
-    }
-    reverse[count] = '\0';
-    char *first = s21_strstr(reverse, "ffffffff");
-    char *second = s21_strstr(reverse, "FFFFFFFF");
-    if (first != S21_NULL || second != S21_NULL) {
-      count = count - 8;
-    }
-    if (pointer_flag) {
-      if (upper_flag) {
-        reverse[count++] = 'X';
-        reverse[count++] = '0';
-      } else {
-        reverse[count++] = 'x';
-        reverse[count++] = '0';
-      }
-    }
-    for (; i < count; i++) {
-      res[i] = reverse[count - i - 1];
-    }
-    res[i] = '\0';
-  }
-  free(reverse);
-  return res;
-}
-
-char *float_to_string(long double num, int g_flag, params *variable) {
-  char *res = malloc(sizeof(char) * 50);
-  if (!res) exit(0);
-  char *reverse = S21_NULL;
-  int top = 0;
-  int loc_precision = variable->precision_num;
-  int sign_flag = 0;
-
-  if (num < 0) {
-    res[top] = '-';
-    num *= -1;
-    top++;
-    sign_flag = 1;
-  }
-  if (num != 0 && log10(num) >= 0) {
-    reverse = s21_itoa((long int)num);
-    for (int j = 0; j < (int)s21_strlen(reverse); j++) {
-      res[top] = reverse[j];
-      top++;
-    }
-    free(reverse);
-  } else {
-    res[top] = '0';
-    top++;
-  }
-  res[top] = conflicting_char;
-  top++;
-  int fraction = check_fraction(&top, variable, num);
-  long double int_part;
-  long double frac_part = modfl(num, &int_part);
-  if (fraction == 1) {
-    int indicator = 0;
-    long double next;
-    for (int k = 0; k < (loc_precision + 1); k++) {
-      frac_part *= 10;
-      frac_part = modfl(frac_part, &next);
-      res[top] = (int)next + '0';
-      top++;
-    }
-    if (res[top - 1] >= 53) {
-      res[top - 2] = ((res[top - 2] - '0') + 1) % 10 + '0';
-      indicator++;
-    }
-    res[top - 1] = '\0';
-    top--;
-    if (indicator && (res[top - 1] == '0')) {
-      int helper;
-      int reminder = 1;
-      for (int i = top - 2; i >= sign_flag; i--) {
-        if (res[i] == '.' || res[i] == ',') {
-          continue;
-        }
-        helper = reminder + res[i] - '0';
-        res[i] = (helper % 10) + '0';
-        reminder = helper / 10;
-      }
-    }
-  } else {
-    if ((long long int)round(num) - (long int)int_part > 0) {
-      int helper;
-      int reminder = 0;
-      helper = reminder + res[top - 1] - '0';
-      res[top - 1] = ((helper + 1) % 10) + '0';
-      reminder = (helper + 1) / 10;
-      for (int i = top - 2; i >= sign_flag; i--) {
-        helper = reminder + res[i] - '0';
-        res[i] = (helper % 10) + '0';
-        reminder = helper / 10;
-      }
-    }
-  }
-  if (g_flag == 1 && variable->hash_zero == 0) {
-    delete_zero(res, &top);
-  }
-
-  res[top] = '\0';
-  top++;
-  return res;
-}
-
-char *exp_to_string(long double v_e, const char *exp_letter, int g_flag,
-                    params *variable) {
-  char *res = malloc(sizeof(char) * 50);
-  if (!res) exit(0);
-  int top = 0;
-  char exp_sign = '+';
-  int loc_precision = variable->precision_num;
-  char letter = (*exp_letter == 'E' || *exp_letter == 'G') ? 'E' : 'e';
-  int main_sign = 0;
-
-  if (v_e < 0) {
-    res[top] = '-';
-    v_e *= -1;
-    top++;
-    main_sign = 1;
-  }
-  int v_log = 0;
-  if (v_e > 0) {
-    v_log = find_exp(v_e);
-  }
-  if (v_e > 0 && v_e < 1) {
-    exp_sign = '-';
-  }
-  long double num_to_save = (v_e / pow(10, v_log));
-  res[top] = '0' + (int)num_to_save;
-  top++;
-  res[top] = conflicting_char;
-  top++;
-  long double int_part;
-  long double frac_part = modfl(num_to_save, &int_part);
-  int fraction = check_fraction(&top, variable, num_to_save);
-  if (fraction == 1) {
-    int indicator = 0;
-    long double next;
-    for (int i = 0; i < loc_precision + 1; i++) {
-      frac_part *= 10;
-      frac_part = modfl(frac_part, &next);
-      res[top] = (int)next + '0';
-      top++;
-    }
-    if (res[top - 1] >= 53) {
-      res[top - 2] = ((res[top - 2] - '0') + 1) % 10 + '0';
-      indicator++;
-    }
-    res[top - 1] = '\0';
-    top--;
-    if (indicator && (res[top - 1] == '0')) {
-      int helper;
-      int reminder = 1;
-      for (int i = top - 2; i >= main_sign; i--) {
-        if (res[i] == ',' || res[i] == '.') {
-          continue;
-        }
-        helper = reminder + res[i] - '0';
-        res[i] = (helper % 10) + '0';
-        reminder = helper / 10;
-      }
-    }
-    if (g_flag == 1 && variable->hash_zero == 0) {
-      delete_zero(res, &top);
-    }
-  } else {
-    if ((long long int)round(num_to_save) - (long int)int_part > 0) {
-      int helper2 = res[0] - '0';
-      res[0] = ((helper2 + 1) % 10) + '0';
-    }
-  }
-  res[top] = letter;
-  top++;
-  res[top] = exp_sign;
-  top++;
-  if (v_log < 10 && v_log > -10) {
-    res[top] = '0';
-    top++;
-  }
-  char *exp_string = s21_itoa(v_log);
-  int i = (v_log >= 0) ? 0 : 1;
-  for (; i < (int)s21_strlen(exp_string); i++) {
-    res[top] = exp_string[i];
-    top++;
-  }
-  free(exp_string);
-  res[top] = '\0';
-  return res;
-}
-
-int check_fraction(int *top, params *variable, long double num) {
-  int total;
-  long int check = (long int)num;
-  if ((num - check) == 0) {
-    if (variable->precision_num == 0 && variable->dot_check == 1 &&
-        variable->hash_zero == 1) {
-      total = 0;
-    } else if (variable->precision_num == 0 && variable->dot_check == 1 &&
-               variable->hash_zero == 0) {
-      total = 0;
-      *top -= 1;
-    } else {
-      total = 1;
-    }
-  } else if (variable->dot_check == 1 && variable->precision_num == 0) {
-    if (variable->hash_zero == 0) {
-      total = 0;
-      *top -= 1;
-    } else {
-      total = 0;
-    }
-  } else {
-    total = 1;
-  }
-  return total;
-}
-
-int check_precision(params *variable, int expo) {
-  int res = 2;
-  if (variable->precision_num == 0) {
-    if (expo < -4 || expo >= 6) {
-      res = 1;
-    }
-  } else if (variable->precision_num > 0) {
-    if (expo < -4 || expo >= variable->precision_num) {
-      res = 1;
-    }
-  }
-  return res;
+    format++;
+  }
+  *str = '\0';
+  va_end(factor);
+  return str - tmp_str;
 }

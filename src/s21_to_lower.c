@@ -1,22 +1,24 @@
 #include "s21_string.h"
-/*Возвращает копию этой строки, переведенную в нижний регистр*/
 
 void *s21_to_lower(const char *str) {
-  char *new_str;
-  if (str == S21_NULL)
-    new_str = S21_NULL;
+  char *str_copy = S21_NULL;
 
-  else {
-    if (str) {
-      new_str = (char *)malloc((s21_strlen(str) + 1) * sizeof(char));
-    }
-    if (new_str) {
-      s21_strcpy(new_str, str);
-      for (int i = 0; i < s21_strlen(new_str) + 1; i++) {
-        if (new_str[i] >= 65 && new_str[i] <= 90) new_str[i] += 32;
+  if (str != S21_NULL) {
+    s21_size_t len = s21_strlen(str);
+
+    str_copy = (char *)malloc(sizeof(char) * (len + 1));
+
+    if (str_copy) {
+      for (s21_size_t i = 0; i <= len; i++) {
+        if (str[i] >= 'A' && str[i] <= 'Z') {
+          str_copy[i] = (str[i] - 'A') + 'a';
+        } else {
+          str_copy[i] = str[i];
+        }
       }
-      new_str[s21_strlen(new_str)] = '\0';
+      str_copy[len] = '\0';
     }
   }
-  return (void *)new_str;
+
+  return str_copy;
 }

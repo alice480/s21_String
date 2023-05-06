@@ -1,35 +1,30 @@
 #include "s21_string.h"
 
-/*returns a new string in which a specified string(str) is
-inserted at a specified index position (start_index) in
-the given string(src).
-in case of any error, return NULL*/
-
 void *s21_insert(const char *src, const char *str, s21_size_t start_index) {
-  char *new_str = S21_NULL;
-  int error = 0;
-  if (src != S21_NULL && str != S21_NULL) {
-    s21_size_t src_length = s21_strlen(src);
-    s21_size_t str_length = s21_strlen(str);
+  char *res = S21_NULL;
 
-    if (str && src && start_index <= (src_length) && start_index >= 0) {
-      new_str = (char *)calloc(str_length + 1 + src_length, sizeof(char));
-      for (int i = 0; i < start_index; i++) {
-        new_str[i] = src[i];
-      }
-      for (int i = start_index, j = 0; i < start_index + str_length; i++) {
-        new_str[i] = str[j++];
-      }
-      for (int i = start_index + str_length; i < (str_length + src_length);
-           i++) {
-        new_str[i] = src[start_index++];
-      }
-    } else {
-      error = 1;
+  if (src != S21_NULL && str != S21_NULL) {
+    s21_size_t src_len = s21_strlen(src);
+    s21_size_t str_len = s21_strlen(str);
+    s21_size_t new_len = src_len + str_len;
+
+    if (str_len >= start_index) {
+      res = (char *)malloc(sizeof(char) * new_len + 1);
     }
-  } else if (str == S21_NULL && src != S21_NULL) {
-    new_str = calloc(s21_strlen(src) + 1, sizeof(char));
-    s21_strcpy(new_str, src);
+
+    if (res) {
+      for (s21_size_t i = 0, j = 0, m = 0; i < new_len; i++) {
+        if (i >= start_index && j < src_len) {
+          res[i] = src[j];
+          j++;
+        } else {
+          res[i] = str[m];
+          m++;
+        }
+      }
+      res[new_len] = '\0';
+    }
   }
-  return new_str;
+
+  return res;
 }

@@ -1,19 +1,11 @@
 #include "s21_string.h"
 
-// Находит первый символ в строке str1, который соответствует любому символу,
-// указанному в str2.
-
 char *s21_strpbrk(const char *str1, const char *str2) {
-  char *cstr1 = (char *)str1;
-  char *res = S21_NULL;
-  int flag = 0;
-  while (*cstr1 != '\0' && flag != 1) {
-    if (s21_strchr(str2, *cstr1)) {
-      flag = 1;
-      res = cstr1;
-    } else {
-      cstr1++;
-    }
+  size_t i = 0, j = 0;
+  for (; i < s21_strlen(str2) && str1[j] != str2[i]; i++) {
+    for (j = 0; j < s21_strlen(str1) && str1[j] != str2[i]; j++) {
+    };
   }
-  return res;
+  return (j < s21_strlen(str1) && i < s21_strlen(str2)) ? (char *)str1 + j
+                                                        : S21_NULL;
 }

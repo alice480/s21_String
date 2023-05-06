@@ -1,619 +1,494 @@
+#include "s21_sscanf.h"
+
 #include "s21_string.h"
 
-int s21_sscanf(const char *str, const char *format, ...) {
-  int output = 0;
-  char *c_format = (char *)format;
-  Format_string format_string = {0};
-  va_list assign_variables;
-  va_start(assign_variables, format);
-  if (!s21_strcmp(str, ""))
-    output = -1;
-  else if (str != S21_NULL && (c_format) && s21_strchr(c_format, '%'))
-    output = string_processing(str, c_format, assign_variables, &format_string);
+int s21_sscanf(const char *str, const char *fstr, ...) {
+  int eof_fl = check_EOF_string(str), res = 0;
+
+  if (!eof_fl) {
+    va_list va;
+    va_start(va, fstr);
+    int tokens_len = 0;
+
+    char *formstr = (char *)fstr;
+    int len = (int)s21_strlen(formstr);
+    char *src = (char *)str;
+
+    token tokens[BUFF_SIZE];
+
+    while (*formstr && formstr < fstr + len) {
+      tokens[tokens_len] = parse_tokens(&formstr, &va);
+      tokens_len++;
+    }
+
+    write_tokens_to_memory(&src, tokens, tokens_len, &res);
+    va_end(va);
+  }
+
+  return (eof_fl) ? eof_fl : res;
+}
+
+int s21_isspace(char c) { return (c == ' ' || c == '\n' || c == '\t'); }
+
+int s21_isalpha(char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+int check_EOF_string(const char *src) {
+  int res = -1;
+
+  for (int i = 0; src[i]; i++) {
+    if (!s21_isspace(src[i]) && src[i] != '\0') {
+      res = 0;
+      break;
+    }
+  }
+
+  return res;
+}
+
+token parse_tokens(char **fstr, va_list *va) {
+  token tok = {.addr = S21_NULL,
+               .length_t = NONE_LENGTH,
+               .spec = 0,
+               .width = NONE_WIDTH,
+               .width_n = 0};
+
+  if (s21_isspace(**fstr)) {
+    tok.spec = 'z';
+    skip_spaces_in_str(fstr);
+  }
+
+  if (**fstr == '%' && !tok.spec) {
+    (*fstr)++;
+
+    fstr_parse_width(fstr, &tok);
+    fstr_parse_length(fstr, &tok);
+    fstr_parse_specifier(fstr, &tok);
+
+    if (tok.width != WIDTH_AST) tok.addr = va_arg(*va, void *);
+
+    if (tok.spec == 'p') tok.length_t = NONE_LENGTH;
+  }
+
+  if (s21_isalpha(**fstr) && !tok.spec) {
+    s21_memset(tok.buff, '\0', BUFF_SIZE - 1);
+    int i = 0;
+    while (**fstr && !s21_isspace(**fstr) && **fstr != '%') {
+      tok.buff[i++] = **fstr;
+      (*fstr)++;
+    }
+    tok.spec = 'b';
+  }
+
+  return tok;
+}
+
+void skip_chars_in_buffer(char **src, int *fail, token *tok) {
+  skip_spaces_in_str(src);
+
+  int test = s21_strspn(*src, tok->buff);
+  int len = s21_strlen(tok->buff);
+
+  if (test != len)
+    *fail = 1;
   else
-    output = 0;
-  va_end(assign_variables);
-  return output;
+    (*src) = (*src) + len;
 }
 
-int string_processing(const char *str, const char *format,
-                      va_list assign_variables, Format_string *format_string) {
-  int flag = 0, used_args = 0;
-  char *c_str = (char *)str;
-  format_string->last_address = (s21_size_t)c_str;
-  format_string->strlen_str = s21_strlen(str);
-  if (*format != '%') {
-    if (s21_strchr(" \t\n", *format)) {
-      while (s21_strchr(" \t\n", *format) && *format != '\0') format++;
-      if (s21_strchr(" \t\n", *c_str))
-        while (s21_strchr(" \t\n", *c_str)) c_str++;
-    }
-  }
-
-  while ((*format != '\0' && flag != -1 && *c_str != '\0' && flag != 1)) {
-    while (s21_strchr(" \n\t", *format) && *format != '\0') {
-      format++;
-      while (s21_strchr("\t\n ", *c_str) && *c_str != '\0') c_str++;
-    }
-    if (*format != '%' && *format != '\0' && *c_str != '\0') {
-      if (*format == *c_str && *c_str != '\0') {
-        while (*format == *c_str && *c_str != '\0') {
-          c_str++;
-          format++;
-        }
-      } else
-        flag = -1;
-    }
-    if (*format == '%' && flag != 1 && *format != '\0') {
-      if (*(format + 1) == '%') {
-        format += s21_strspn(format, " %%\t\n");
-        while (s21_strchr(" %%", *c_str)) c_str++;
-        if (*(c_str + 1) == '%') {
-          flag = 1;
-        } else {
-          c_str += s21_strspn(c_str, " %%\t\n");
-        }
-      } else
-        format++;
-    }
-    while (*format == '*' && *format != '\0' && *c_str != '\0' && flag != 1) {
-      format_string->suppress_assignment += 1;
-      format++;
-      format_string->specificator = *format;
-      while (*format != '%' && *format != '\0' && *c_str != '\0') format++;
-      if (*format != '\0')
-        format++;
-      else
-        flag = 1;
-      if (*format != '*') break;
-    }
-    if ((*c_str != '\0' && *format != '\0') || (flag == 'n')) {
-      if (flag == 0 && *c_str != '\0') {
-        flag = format_string_parcing(&format, format_string, &used_args);
-        if (flag == 0 && *c_str != '\0') {
-          flag = writing_formatted(format_string, &c_str, assign_variables,
-                                   &used_args);
-          if (flag == 0 && *c_str != '\0') {
-            format++;
-            format_string->Width = 0;
-          }
-        }
-      }
-    }
-    if (*(format + 3) == 'n' && *c_str == '\0') {
-      format += 3;
-      format_string->specificator = 'n';
-      flag = writing_formatted(format_string, &c_str, assign_variables,
-                               &used_args);
-      if (flag == 0 && *c_str != '\0') {
-        format++;
-        format_string->Width = 0;
-      }
-    }
-  }
-  format_string->suppress_assignment = 0;
-  if (flag == -1) used_args = -1;
-  return used_args;
-}
-
-int format_string_parcing(const char **format, Format_string *format_string,
-                          int *used_args) {
-  int move = 0, flag = 0, is_spec = 0;
-  char temp[256] = {0};
-  while (**format != '\0' && flag == 0 && is_spec == 0) {
-    if (s21_strchr("cdieEfgGosuxXpn", **format)) {
-      format_string->specificator = **format;
-      is_spec = 1;
-    } else if (s21_strchr("0123456789", **format)) {
-      s21_size_t ind = 0;
-      while (**format >= 48 && **format <= 57) {
-        temp[ind++] = **format;
-        (*format)++;
-      }
-      move = s21_atoi(temp, format_string);
-      format_string->Width = move;
-    } else if (s21_strchr("hlL", **format)) {
-      format_string->length = **format;
-      (*format)++;
-    }
-  }
-  return flag;
-}
-
-int writing_formatted(Format_string *format_string, char **c_str,
-                      va_list assign_variables, int *used_args) {
-  int flag = 0;
-  if (format_string->specificator == 'c')
-    flag = write_to_char(format_string, c_str, assign_variables, used_args);
-  else if (s21_strchr("diuxXopn", format_string->specificator))
-    flag = write_to_int(format_string, c_str, assign_variables, used_args);
-  else if (s21_strchr("fgGeE", format_string->specificator))
-    flag = write_to_float(format_string, c_str, assign_variables, used_args);
-  else if (format_string->specificator == 's')
-    flag = write_to_str(format_string, c_str, assign_variables, used_args);
-  return flag;
-}
-
-int write_to_char(Format_string *format_string, char **str,
-                  va_list assign_variables, int *used_args) {
-  int flag = 0, width = format_string->Width,
-      not_assign = format_string->suppress_assignment, i = 0;
-  char buf[300] = {0};
-  if (format_string->Width == 0) width = 1;
-  if (not_assign > 0) {
-    if (width == 1) {
-      while (not_assign != 0) {
-        (*str)++;
-        not_assign--;
-      }
-    } else {
-      while (width != 0) {
-        (*str)++;
-        width--;
-      }
-      (*str)++;
-      not_assign--;
-    }
-  }
-  if (**str != '\0') {
-    buf[i++] = **str;
-    width--;
-    while (width != 0) {
-      (*str)++;
-      width--;
-    }
-    (*str)++;
-    buf[i] = '\0';
-    i = 0;
-    *(va_arg(assign_variables, char *)) = (int)buf[i];
-    (*used_args)++;
-    format_string->suppress_assignment = 0;
-  }
-  return flag;
-}
-
-int write_to_str(Format_string *format_string, char **str,
-                 va_list assign_variables, int *used_args) {
-  int flag = 0, width = 0, token_length = 0;
-  width = (format_string->Width);
-  char *argPtr = va_arg(assign_variables, char *);
-  int isEmptyStr = 0;
-  while (s21_strchr("\n\t ", **str)) (*str)++;
-  if (format_string->suppress_assignment > 0) {
-    while (format_string->suppress_assignment > 0 && **str != '\0') {
-      while (**str && !s21_strchr("\n\t ", **str)) (*str)++;
-      while (**str && s21_strchr("\n\t ", **str)) (*str)++;
-      if (!s21_strchr("\n\t ", **str)) format_string->suppress_assignment--;
-    }
-  }
-  while (**str && s21_strchr("\n\t ", **str)) {
-    (*str)++;
-    isEmptyStr = 1;
-  }
-  if (width >= 1) {
-    while (**str && !s21_strchr("\n\t ", **str) && width != 0) {
-      *argPtr++ = **str;
-      (*str)++;
-      isEmptyStr = 1;
-      width--;
-    }
+void fstr_parse_width(char **fstr, token *tok) {
+  if (**fstr == '*') {
+    (*fstr)++;
+    tok->width = WIDTH_AST;
   } else {
-    while (**str && !s21_strchr("\n\t ", **str)) {
-      *argPtr++ = **str;
-      (*str)++;
-      isEmptyStr = 1;
-      width--;
+    int res = parse_number_from_fstr(fstr);
+
+    if (res) {
+      tok->width = WIDTH_NUMBER;
+      tok->width_n = res;
     }
   }
-  if (isEmptyStr) *argPtr = '\0';
-  (*(used_args)) += 1;
-  return flag;
 }
 
-int write_to_int(Format_string *format_string, char **str,
-                 va_list assign_variables, int *used_args) {
-  int flag = 0;
-  char buf[400] = {'\0'};
-  char *buffPtr;
-  buffPtr = buf;
-  int *argPtr;
-  long long int d_value = 0;
-  int width = (format_string->Width);
-  char spec = format_string->specificator;
-  if (spec != 'n') {
-    while (*str && s21_strchr("\n\t ", **str)) {
-      (*str)++;
-      format_string->count_symbols++;
-    }
+int parse_number_from_fstr(char **fstr) {
+  char tmp[BUFF_SIZE] = {'\0'};
+
+  int res = 0, i = 0;
+
+  while (**fstr >= '0' && **fstr <= '9') {
+    tmp[i] = **fstr;
+    (*fstr)++;
+    i++;
   }
-  if (format_string->count_symbols == (format_string->strlen_str) + 1)
-    flag = -1;
-  else if (((!s21_strchr("aAbBcCdDeEfF0123456789+-", **str) && spec != 'n')))
-    flag = 1;
-  if (format_string->suppress_assignment > 0) {
-    while (format_string->suppress_assignment > 0 && **str != '\0') {
-      while (**str != '\0' && !s21_strchr("\n\t ", **str)) {
-        (*str)++;
-        format_string->count_symbols++;
-      }
-      format_string->suppress_assignment--;
-    }
-    while (s21_strchr("\n\t ", **str)) {
-      (*str)++;
-      format_string->count_symbols++;
-    }
-  }
-  if (s21_strchr("aAbBcCdDeEfF", **str) &&
-      (spec != 'x' && spec != 'X' && spec != 'n')) {
-    flag = 1;
-  }
-  if (abs(flag) != 1) {
-    if (s21_strchr("+-", **str) &&
-        (!s21_strchr("aAbBcCdDeEfF0123456789", *(*str + 1)) || width == 1))
-      flag = 1;
-    if (**str == '+') {
-      (*str)++;
-      if (width > 0) {
-        width--;
-        if (width == 0) flag = 1;
-      }
-    } else if (**str == '-') {
-      format_string->is_neg = 1;
-      (*str)++;
-      if (width > 0) {
-        width--;
-        if (width == 0) flag = 1;
-      }
-    }
-    if (spec == 'p' || spec == 'x' || spec == 'X') {
-      if ((*(*str + 1) == 'x' || *(*str + 1) == 'X')) {
-        if (**str == '0') {
-          *(str) += 2;
-          if (width > 2) width -= 2;
-        } else
-          flag = 1;
-      }
-    } else if (spec == 'i') {
-      format_string->is_i = 1;
-      if (**str == '0') {
-        if (*(*str + 1) == 'x' || *(*str + 1) == 'X') {
-          *(str) += 2;
-          if (width > 0) width -= 2;
-          spec = 'x';
-        } else {
-          spec = 'o';
-        }
-      } else {
-        spec = 'd';
-      }
-    }
-    if (spec != 'n' && spec != 'd' && spec != 'u' && spec != 'o') {
-      s21_size_t i = 0;
-      if (width == 0) {
-        while (!s21_strchr(" \n\t-+", **str) &&
-               s21_strchr("0123456789aAbBcCdDeEfF-", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-        }
-      } else {
-        while (width > 0 && !s21_strchr(" \n\t-+", **str) &&
-               s21_strchr("0123456789aAbBcCdDeEfF-", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-          width--;
-        }
-      }
-    } else if (spec == 'u' || spec == 'd') {
-      s21_size_t i = 0;
-      if (width == 0) {
-        while (!s21_strchr(" \n\t-+", **str) &&
-               s21_strchr("0123456789-", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-        }
-      } else {
-        while (width > 0 && !s21_strchr(" \n\t-+aAbBcCdDeEfFxX", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-          width--;
-        }
-      }
-    } else if (spec == 'o') {
-      s21_size_t i = 0;
-      if (width == 0) {
-        while (!s21_strchr(" \n\t-+\0", **str) &&
-               s21_strchr("01234567-", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-        }
-      } else {
-        while (width > 0 && s21_strchr("01234567-", **str)) {
-          buf[i] = **str;
-          (*str)++;
-          i++;
-          width--;
-        }
-      }
-    }
-    format_string->count_symbols += s21_strlen(buf);
-    if (*buf == 0 && s21_strlen(buf) == 0 && spec == 'o') flag = 1;
-    if ((s21_strlen(buf) != 0 || spec == 'n') && abs(flag) != 1) {
-      if ((spec == 'p' || spec == 'x' || spec == 'X')) {
-        d_value = conv_16_to_10(buf, format_string);
-      } else if (spec == 'o' && flag != 1) {
-        d_value = conv_8_to_10(buf, format_string);
-      } else if ((spec == 'd' || spec == 'u')) {
-        d_value = s21_atoi(buf, format_string);
-      } else if (spec == 'n') {
-        d_value = (long long int)(*str - (format_string->last_address));
-      } else
-        flag = 1;
-    }
-    if (abs(flag) != 1) {
-      if (format_string->length) {
-        if (spec != 'u' && spec != 'n') {
-          if (format_string->length == 'h') {
-            *(va_arg(assign_variables, short int *)) = (short int)d_value;
-            (*used_args)++;
-          } else if (format_string->length == 'l') {
-            *(va_arg(assign_variables, long long int *)) =
-                (long long int)d_value;
-            (*used_args)++;
-          } else {
-            *(va_arg(assign_variables, int *)) = (int)d_value;
-            (*used_args)++;
-          }
-          format_string->length = 0;
-        } else if (spec != 'n') {
-          if (format_string->length == 'h') {
-            *(va_arg(assign_variables, unsigned short int *)) =
-                (unsigned short int)d_value;
-            (*used_args)++;
-          } else if (format_string->length == 'l') {
-            *(va_arg(assign_variables, unsigned long int *)) =
-                (unsigned long int)d_value;
-            (*used_args)++;
-          } else {
-            *(va_arg(assign_variables, unsigned int *)) = (unsigned int)d_value;
-            (*used_args)++;
-          }
-        } else if (spec == 'n') {
-          *(va_arg(assign_variables, int *)) = (int)d_value;
-          (*used_args)++;
-        }
-        format_string->length = 0;
-      } else {
-        if (spec != 'u') {
-          *(va_arg(assign_variables, int *)) = d_value;
-          (*used_args)++;
-        } else {
-          *(va_arg(assign_variables, unsigned int *)) = (unsigned int)d_value;
-          (*used_args)++;
-        }
-      }
-      if (spec == 'n') (*used_args)--;
-    }
-  }
-  return flag;
+
+  res = s21_atoi(tmp);
+
+  return res;
 }
 
-long unsigned conv_8_to_10(char *buffer, Format_string *format_string) {
-  long long int sum = 0, count = 0;
-  int flag = 0, overflow = 0, sign = 0;
-  if (format_string->is_neg == 1) sign = -1;
-  s21_strtok(buffer, ".");
-  while (count < s21_strlen(buffer)) {
-    sum += (buffer[count] - '0') * pow(8, s21_strlen(buffer) - count - 1);
-    count++;
-    if (sum < 0) overflow = 1;
+void fstr_parse_length(char **fstr, token *tok) {
+  switch (**fstr) {
+    case 'h':
+      tok->length_t = LENGTH_SHORT;
+      (*fstr)++;
+      break;
+    case 'l':
+      tok->length_t = LENGTH_LONG;
+      (*fstr)++;
+      if (**fstr == 'l') {
+        tok->length_t = LENGTH_LONG_LONG;
+        (*fstr)++;
+      }
+      break;
+    case 'L':
+      tok->length_t = LENGTH_LONG_DOUBLE;
+      (*fstr)++;
+      break;
   }
-  if (overflow == 1) {
-    if (format_string->is_i != 1)
-      sum = ULLONG_MAX;
-    else {
-      if (sign == -1)
-        sum = LLONG_MIN;
-      else
-        sum = LLONG_MAX;
-    }
-  } else if (sign == -1)
-    sum *= sign;
-  format_string->is_neg = 0;
-  return sum;
 }
 
-long unsigned conv_16_to_10(char *buffer, Format_string *format_string) {
-  long long int sum = 0, count = 0;
-  int flag = 0, overflow = 0, sign = 0;
-  if (format_string->is_neg == 1) sign = -1;
-  s21_strtok(buffer, ".");
-  while (count < s21_strlen(buffer)) {
-    if ((buffer[count] >= 65 && buffer[count] <= 70))
-      sum += (buffer[count] + 10 - 'A') *
-             pow(16, s21_strlen(buffer) - ((count) + 1));
-    else if (buffer[count] >= 'a' && buffer[count] <= 'f')
-      sum += (buffer[count] + 10 - 'a') *
-             pow(16, s21_strlen(buffer) - ((count) + 1));
-    else if (buffer[count] >= 48 && buffer[count] <= 57)
-      sum +=
-          (buffer[count] - '0') * pow(16, s21_strlen(buffer) - ((count) + 1));
-    if (sum < 0) {
+int s21_atoi(const char *str) {
+  int res = 0;
+  int sign = 1;
+  int overflow = 0;
+
+  while (*str == ' ') str++;
+
+  if (*str == '-') {
+    str++;
+    sign = -1;
+  }
+
+  if (*str == '+') {
+    str++;
+  }
+
+  while (*str && *str <= '9') {
+    res = res * 10 + (*str - '0');
+    if (res < 0) {
       overflow = 1;
       break;
     }
-    count++;
+    str++;
   }
-  if (overflow == 1) {
-    if (format_string->is_i != 1)
-      sum = ULLONG_MAX;
-    else {
-      if (sign == -1)
-        sum = LLONG_MIN;
-      else
-        sum = LLONG_MAX;
-    }
-  } else if (sign == -1)
-    sum *= sign;
-  format_string->is_neg = 0;
-  format_string->is_i = 0;
-  return sum;
+  if (overflow)
+    res = sign > 0 ? INT32_MAX : INT32_MIN;
+  else
+    res *= sign;
+
+  return res;
 }
 
-long long s21_atoi(char *buffer, Format_string *format_string) {
-  long long count = 0, sum = 0, overflow = 0, sign = 0;
-  if (format_string->is_neg == 1) sign = -1;
-  s21_strtok(buffer, ".");
-  while (count < s21_strlen(buffer)) {
-    sum = sum * 10 + (buffer[count] - '0');
-    if (sum < 0) {
-      overflow = 1;
-      break;
-    }
-    count++;
-  }
-  if (overflow == 1) {
-    if (format_string->specificator != 'u') {
-      if (sign == -1)
-        sum = LLONG_MIN;
-      else
-        sum = LLONG_MAX;
-    } else {
-      sum = ULLONG_MAX;
-    }
-
-  } else if (sign == -1)
-    sum *= sign;
-  format_string->is_neg = 0;
-  return sum;
+void fstr_parse_specifier(char **fstr, token *tok) {
+  tok->spec = (**fstr);
+  (*fstr)++;
 }
 
-int write_to_float(Format_string *format_string, char **str,
-                   va_list assign_variables, int *used_args) {
-  int flag = 0, width = (format_string->Width);
-  s21_size_t i = 0;
-  char buf[500] = {'\0'};
-  char spec = format_string->specificator;
-  long double l_value = 0.0;
-  while (*str && s21_strchr("\n\t ", **str)) (*str)++;
-  if (**str == '.') {
-    if (!s21_strchr("0123456789eE", *(*str + 1)) || *(*str + 1) == '\0')
-      flag = 1;
-  } else if (!s21_strchr("0123456789.+-", **str))
-    flag = 1;
-  if ((**str == '+' || **str == '-') &&
-      !s21_strchr("0123456789.eE", *(*str + 1)))
-    flag = 1;
-  if (format_string->suppress_assignment > 0) {
-    while (format_string->suppress_assignment > 0) {
-      while (**str != '\0' && !s21_strchr("\n\t ", **str)) {
-        (*str)++;
-        format_string->count_symbols++;
-      }
-      format_string->suppress_assignment--;
-    }
-    while (s21_strchr("\n\t ", **str)) {
+void write_tokens_to_memory(char **src, token *tokens, int tok_len, int *res) {
+  char *start = *src;
+
+  for (int i = 0, fail = 0; i < tok_len && !fail; i++) {
+    char spec = tokens[i].spec;
+    if (spec == 'c') write_char_to_memory(src, res, (tokens + i));
+    if (spec == 'd') write_int_to_memory(src, &fail, res, (tokens + i));
+    if (spec == 'i') write_unspec_int_to_memory(src, &fail, res, (tokens + i));
+    if (spec == 'g' || spec == 'G' || spec == 'f')
+      write_float_to_memory(src, res, (tokens + i));
+    if (spec == 's') write_string_to_memory(src, &fail, res, (tokens + i));
+    if (spec == 'u') write_unsigned_to_memory(src, &fail, res, (tokens + i));
+    if (spec == 'p' || spec == 'x' || spec == 'X')
+      write_hex_or_oct_to_memory(src, &fail, res, (tokens + i), 16);
+    if (spec == 'o')
+      write_hex_or_oct_to_memory(src, &fail, res, (tokens + i), 8);
+    if (spec == 'n') *((int *)tokens[i].addr) = (*src) - start;
+    if (spec == 'z') skip_spaces_in_str(src);
+    if (spec == 'b') skip_chars_in_buffer(src, &fail, (tokens + i));
+  }
+}
+
+/* Memory writing stage */
+
+void skip_spaces_in_str(char **src) {
+  while (**src && s21_isspace(**src)) {
+    (*src)++;
+  }
+}
+
+void write_char_to_memory(char **str, int *res, token *tok) {
+  if (tok->width == WIDTH_AST) {
+    (*str)++;
+  } else {
+    *(char *)tok->addr = **str;
+    (*str)++;
+    (*res)++;
+  }
+}
+
+void write_int_to_memory(char **str, int *fail_flag, int *res, token *tok) {
+  long long int result = 0;
+  char buff[BUFF_SIZE] = {'\0'};
+
+  *fail_flag = 1;
+
+  if (s21_strspn(*str, "0123456789+-")) {
+    int sign = s21_strspn(*str, "+-");
+    if (!(sign > 1 || (sign && (tok->width_n <= 1 && tok->width)))) {
+      buff[0] = **str;
       (*str)++;
-      format_string->count_symbols++;
+      write_chars_to_buff(str, "0123456789", buff, tok->width_n, 1);
+      if (tok->width != WIDTH_AST) (*res)++;
+      *fail_flag = 0;
     }
   }
-  if (**str == '+') {
-    (*str)++;
-    if (width > 0) {
-      width--;
-      if (width == 0) flag = 1;
-    }
-  } else if (**str == '-') {
-    format_string->is_neg = 1;
-    (*str)++;
-    if (width > 0) {
-      width--;
-      if (width == 0) flag = 1;
-    }
+
+  result = s21_atoi(buff);
+
+  /* Length handling & Writing to memory */
+  if (tok->width != WIDTH_AST && !*fail_flag)
+    int_type_converter(tok, result, 1);
+
+  /* If width is specified, sscanf does not skip number */
+  if (tok->width != WIDTH_NUMBER)
+    write_chars_to_buff(str, "0123456789", S21_NULL, 0, 0);
+}
+
+void write_unspec_int_to_memory(char **str, int *fail_flag, int *res,
+                                token *tok) {
+  *fail_flag = 1;
+
+  skip_spaces_in_str(str);
+
+  if (s21_strspn(*str, "0x") == 2) {
+    *fail_flag = 0;
+    write_hex_or_oct_to_memory(str, fail_flag, res, tok, 16);
+  } else if (s21_strspn(*str, "0") == 1) {
+    *fail_flag = 0;
+    write_hex_or_oct_to_memory(str, fail_flag, res, tok, 8);
+  } else if (s21_strspn(*str, "+-0123456789")) {
+    *fail_flag = 0;
+    write_int_to_memory(str, fail_flag, res, tok);
   }
-  if (flag != 1) {
-    s21_size_t i = 0;
-    if (width == 0) {
-      while (!(s21_strchr(" \n\t", **str)) &&
-             s21_strchr("0123456789eE.+-", **str)) {
-        buf[i++] = **str;
+}
+
+// if BUFF is S21_NULL, we simply skip chars
+// if precision is <= 0, it does not do anyhting
+void write_chars_to_buff(char **str, const char *chars, char *buff,
+                         int16_t width, int start_ind) {
+  while (**str && s21_strspn(*str, chars) != 0) {
+    if ((width && start_ind >= width) || (s21_isspace(**str))) break;
+
+    if (buff) buff[start_ind] = **str;
+
+    (*str)++;
+    start_ind++;
+  }
+}
+
+void write_float_to_memory(char **str, int *res, token *tok) {
+  int test = 0;
+
+  if (tok->spec == 'f')
+    test = s21_strspn(*str, "0123456789+-");
+  else
+    test = s21_strspn(*str, "0123456789eE+-NnaAifIF");
+
+  if (test) {
+    int sign = s21_strspn(*str, "+-");
+    if (!(sign > 1 || (sign && (tok->width_n <= 1 && tok->width)))) {
+      char buff[BUFF_SIZE] = {'\0'};
+      int start_ind = 0;
+      if (sign) {
+        buff[0] = **str;
+        start_ind = 1;
         (*str)++;
       }
-    } else {
-      while (width > 0 && !s21_strchr(" \n\t", **str) &&
-             s21_strchr("0123456789eE.+-", **str)) {
-        buf[i] = **str;
-        (*str)++;
+
+      if (tok->spec == 'f')
+        write_chars_to_buff(str, ".0123456789+-", buff, tok->width_n,
+                            start_ind);
+      else
+        write_chars_to_buff(str, ".0123456789eE+-NnaAifIF", buff, tok->width_n,
+                            start_ind);
+
+      if (tok->width != WIDTH_AST) {
+        long double result = s21_strtold(buff);
+        (*res)++;
+        float_type_converter(tok, result);
+      }
+    }
+  }
+
+  if (tok->width != WIDTH_NUMBER) {
+    if (tok->spec == 'f')
+      write_chars_to_buff(str, ".0123456789", S21_NULL, 0, 0);
+    else
+      write_chars_to_buff(str, ".0123456789eE+-NaAifIFn", S21_NULL, 0, 0);
+  }
+}
+
+void write_string_to_memory(char **str, const int *fail_flag, int *res,
+                            token *tok) {
+  int succ = 0;
+  char buff[BUFF_SIZE] = {'\0'};
+  unsigned int i = 0;
+
+  while (**str != '\0' && !succ && !(*fail_flag)) {
+    if (!s21_isspace(**str)) {
+      succ = 1;
+      while (**str != '\0' && !(*fail_flag)) {
+        buff[i] = **str;
         i++;
-        width--;
+
+        if (tok->width == WIDTH_NUMBER && i >= tok->width_n) {
+          break;
+        }
+
+        (*str)++;
+
+        if (s21_isspace(**str)) {
+          (*str)--;
+          break;
+        }
       }
     }
-    if (((buf[0] == '+' || buf[0] == '-') && buf[1] == 'e') ||
-        (buf[0] == 'e' && s21_strchr("0123456789", buf[1])))
-      flag = 1;
-    if (abs(flag) != 1) {
-      format_string->count_symbols += s21_strlen(buf);
-      l_value = s21_strtold(buf, format_string);
-      if (format_string->length) {
-        if (format_string->length == 'l')
-          *va_arg(assign_variables, double *) = (double)l_value;
-        else
-          *va_arg(assign_variables, long double *) = (long double)l_value;
-        (*used_args)++;
-      } else {
-        *(va_arg(assign_variables, float *)) = (float)l_value;
-        (*used_args)++;
-      }
-      format_string->length = 0;
-    }
+
+    (*str)++;
   }
-  return flag;
+
+  if (tok->width != WIDTH_AST && succ) {
+    s21_strcpy((char *)tok->addr, buff);
+    (*res)++;
+  }
 }
 
-long double s21_strtold(char *buffer, Format_string *format_string) {
-  long double result = 0.0L;
-  long double sign = 1.0L;
-  int exp = 0;
-  int exp_sign = 1;
-  int found_digit = 0;
-  int count = 0;
-  if (format_string->is_neg == 1) sign = -1.0L;
-  while (buffer[count] >= '0' && buffer[count] <= '9') {
-    result = result * 10.0L + (long double)(buffer[count] - '0');
-    found_digit = 1;
-    count++;
-  }
-  if (buffer[count] == '.') {
-    count++;
-    long double fraction = 0.1L;
-    while (buffer[count] >= '0' && buffer[count] <= '9') {
-      result += (long double)(buffer[count] - '0') * fraction;
-      fraction *= 0.1L;
-      found_digit = 1;
-      count++;
+void write_unsigned_to_memory(char **str, int *fail_flag, int *res,
+                              token *tok) {
+  *fail_flag = 1;
+  skip_spaces_in_str(str);
+  char buff[BUFF_SIZE] = {'\0'};
+
+  if (s21_strspn(*str, "0123456789+-")) {
+    int sign = s21_strspn(*str, "+-");
+    if (!((sign > 1 || (sign && (tok->width_n <= 1 && tok->width))))) {
+      *fail_flag = 0;
+      buff[0] = **str;
+      (*str)++;
+
+      write_chars_to_buff(str, "0123456789", buff, tok->width_n, 1);
+
+      if (tok->width != WIDTH_AST) (*res)++;
     }
   }
-  if (buffer[count] == 'e' || buffer[count] == 'E') {
-    count++;
-    if (buffer[count] == '-') {
-      exp_sign = -1;
-      count++;
-    } else if (buffer[count] == '+') {
-      count++;
-    }
-    while (buffer[count] >= '0' && buffer[count] <= '9') {
-      exp = exp * 10 + (buffer[count] - '0');
-      count++;
-    }
+
+  unsigned long long int result = s21_atoi(buff);
+
+  if (tok->width != WIDTH_AST && !*fail_flag)
+    unsigned_type_converter(tok, result, 1);
+
+  if (tok->width != WIDTH_NUMBER)
+    write_chars_to_buff(str, "0123456789", S21_NULL, 0, 0);
+}
+
+void write_hex_or_oct_to_memory(char **str, int *fail_flag, int *res,
+                                token *tok, int base) {
+  char *ptr = S21_NULL;
+  int sign = 1;
+
+  skip_spaces_in_str(str);
+
+  if (**str == '-') {
+    tok->width_n--;
+    sign = -1;
+    (*str)++;
   }
-  if (found_digit) {
-    result *= sign;
-    result *= powl(10.0L, (long double)(exp * exp_sign));
+  if (s21_strspn(*str, "0123456789abcdefABCDEF") > 0 ||
+      s21_strspn(*str, "xX0123456789abcdefABCDEF") >= 2) {
+    unsigned long long int result = s21_strntollu(
+        *str, &ptr, base, tok->width ? tok->width_n : s21_strlen(*str));
+    if (tok->width != WIDTH_AST) {
+      if (tok->spec == 'p')
+        *(int *)tok->addr = (int)result;
+      else
+        unsigned_type_converter(tok, result, sign);
+      *res += 1;
+    } else {
+      s21_strntollu(*str, &ptr, base,
+                    tok->width ? tok->width_n : s21_strlen(*str));
+    }
+
+  } else {
+    *fail_flag = 1;
   }
-  format_string->is_neg = 0;
-  return result;
+  *str = ptr;
+}
+
+unsigned long long int s21_strntollu(const char *string, char **endptr,
+                                     int basis, int n_byte) {
+  unsigned long long res = 0;
+  short sign = 1;
+  if (endptr) *endptr = S21_NULL;
+  char dict[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (*string == '-') {
+    sign = -1;
+    string++;
+  }
+  if (basis == 16 &&
+      (!s21_strncmp(string, "0x", 2) || !s21_strncmp(string, "0X", 2)))
+    string += 2;
+  long long val;
+  short exit = 0;
+  while (*string && n_byte && !exit) {
+    char *tmp2;
+    char current_sim =
+        (*string >= 'a' && *string <= 'z') ? *string - 'a' + 'A' : *string;
+    tmp2 = s21_strchr(dict, (int)current_sim);
+    if (!tmp2) {
+      exit = 1;
+    } else {
+      val = (tmp2 - dict) / sizeof(char);
+
+      if (val >= basis) {
+        exit = 1;
+      } else {
+        res = res * basis + val;
+        string++;
+        n_byte--;
+      }
+    }
+    if (exit) *endptr = (char *)string;
+  }
+  return res * sign;
+}
+
+void unsigned_type_converter(token *tok, unsigned long long int result,
+                             int sign) {
+  if (tok->length_t == NONE_LENGTH) {
+    *(unsigned int *)tok->addr = sign * (unsigned int)result;
+  } else if (tok->length_t == LENGTH_SHORT) {
+    *(unsigned short int *)tok->addr = sign * (unsigned short int)result;
+  } else if (tok->length_t == LENGTH_LONG) {
+    *(unsigned long int *)tok->addr = sign * (unsigned long int)result;
+  } else if (tok->length_t == LENGTH_LONG_LONG) {
+    *(unsigned long long int *)tok->addr =
+        sign * (unsigned long long int)result;
+  }
+}
+
+void int_type_converter(token *tok, long long int result, int sign) {
+  if (tok->length_t == NONE_LENGTH) {
+    *(int *)tok->addr = sign * (int)result;
+  } else if (tok->length_t == LENGTH_SHORT) {
+    *(short int *)tok->addr = sign * (short int)result;
+  } else if (tok->length_t == LENGTH_LONG) {
+    *(long int *)tok->addr = sign * (long int)result;
+  } else if (tok->length_t == LENGTH_LONG_LONG) {
+    *(long long int *)tok->addr = sign * (long long int)result;
+  }
+}
+
+void float_type_converter(token *tok, long double result) {
+  if (tok->length_t == NONE_LENGTH) *(float *)tok->addr = (float)result;
+  if (tok->length_t == LENGTH_LONG) *(double *)tok->addr = (double)result;
+  if (tok->length_t == LENGTH_LONG_DOUBLE)
+    *(long double *)tok->addr = (long double)result;
 }

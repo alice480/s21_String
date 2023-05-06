@@ -1,41 +1,61 @@
-CFLAGS = -Wall -Wextra -Werror -std=c11
-STRINGFUNC = $(SOURCES:.c=.o)
-SOURCES = s21_strlen.c s21_strcmp.c s21_strcpy.c s21_strtok.c s21_strncmp.c s21_sprintf.c s21_memmove.c s21_to_upper.c s21_sscanf.c s21_to_lower.c s21_insert.c s21_memchr.c s21_memcmp.c s21_memcpy.c s21_memset.c s21_strcat.c s21_strrchr.c s21_strncpy.c s21_strncat.c s21_strpbrk.c s21_strstr.c s21_strerror.c s21_trim.c s21_strspn.c s21_strcspn.c s21_strchr.c
-TESTS = string_tests.o
-S21STRINGLIB = s21_string.a
+CC=gcc -std=c11 -D_GNU_SOURCE
+CFLAGS=-c -Wall -Wextra -Werror
+TEST_FLAGS=-lcheck -lpthread
+GCOV_FLAGS=--coverage -Wall -Wextra -Werror
 
-UNAME = $(shell uname -s)
-FLAGS = 
-ifeq ($(UNAME), Linux)
-	FLAGS += -lcheck_pic -lm -lsubunit -lrt -lpthread
-else
-	FLAGS += -lcheck
+OS:=$(shell uname -s)
+ifeq ($(OS), Linux)
+	TEST_FLAGS += -lrt -lsubunit -lm
+	CC += -D OS_LINUX
 endif
-all: test
-%.o: %.c
-	gcc $(CFLAG) -c $^ -o $@
 
-test: $(TESTS) $(S21STRINGLIB)
-	gcc $^ -o test $(FLAGS)
-	rm -rf *.o
+ifeq ($(OS), Darwin)
+    CC += -D OS_MAC
+endif
+
+SOURCES=$(wildcard s21_*.c)
+OBJECTS=$(SOURCES:.c=.o)
+TESTS_SOURCES= ./tests/test.c $(wildcard ./tests/test_cases/*.c)
+TESTS_OBJECTS=$(TESTS_SOURCES:.c=.o)
+EXECUTABLE=s21_string
+
+.PHONY: all rebuild style test gcov_report
+
+all: s21_string.a test gcov_report
+
+
+$(EXECUTABLE): $(OBJECTS)
+	$(CC) $^ -o $@
+
+.c.o:
+	$(CC) $(CFLAGS) $< -o $@
+
+s21_string.a: $(OBJECTS)
+	ar -rcs s21_string.a $(OBJECTS)
+	ranlib s21_string.a
+
+test: $(TESTS_OBJECTS) s21_string.a
+	$(CC) $^ -o test $(TEST_FLAGS)
 	./test
 
-$(TESTS): $(TESTS:.o=.c)
-	gcc -Wall -std=c11 -c $^  -o $@
-	
-%.a: $(STRINGFUNC)
-	ar rc $(S21STRINGLIB) $^
-	ranlib $(S21STRINGLIB)
+gcov_report: $(TESTS_OBJECTS)
+	$(CC) $(GCOV_FLAGS) $(TESTS_OBJECTS) $(SOURCES) $(TEST_FLAGS) -o test
+	./test
+	gcov *.gcno
+	lcov -t "test" -o test.info -c -d . --rc lcov_branch_coverage=1
+	genhtml -o report test.info --rc lcov_branch_coverage=1
+	open report/index.html
+
+style:
+	cp ../materials/linters/.clang-format ./
+	clang-format -n *.c *.h
+	clang-format -n tests/*.c tests/*.h
+	clang-format -n tests/test_cases/*.c
+	rm .clang-format
 
 rebuild: clean all
 
-gcov_report: clean $(TESTS)
-	gcc -o test $(TESTS) --coverage $(SOURCES) -lcheck -lm
-	./test
-	lcov -t "a.out" -o test.info -c -d .
-	genhtml -o report test.info
-	open ./report/index.html
-	rm -rf test *.o *.a *gcda *gcno *info
 
 clean:
-	rm -rf test *.o *.a *gcda report *gcno *info
+	rm -rf ./tests/*.o ./tests/test_cases/*.o $(EXECUTABLE) test *.o
+	rm -rf *.gcno *.gcov *.gcda *.info ../*.h.gch report s21_string.a

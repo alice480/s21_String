@@ -1,28 +1,24 @@
 #include "s21_string.h"
 
-/*выделяет очередную часть строки, на которую указывает
-аргумент str, отделенную одним из символов разделителей,
-указанных в delim*/
-
 char *s21_strtok(char *str, const char *delim) {
-  static char *s;
-  char *token;
-  if (((str == S21_NULL && (s == S21_NULL || *s == 0)))) {
-    token = S21_NULL;
+  static char *ptr;
+  char *tokens;
+  if (((str == S21_NULL && (ptr == S21_NULL || *ptr == 0)))) {
+    tokens = S21_NULL;
   } else {
     if (str != S21_NULL) {
-      s = str;
+      ptr = str;
     }
-    while (*s && s21_strchr(delim, *s)) {
-      s++;
+    while (*ptr && s21_strchr(delim, *ptr)) {
+      ptr++;
     }
-    token = s;
-    while (*s && !s21_strchr(delim, *s)) {
-      s++;
+    tokens = ptr;
+    while (*ptr && !s21_strchr(delim, *ptr)) {
+      ptr++;
     }
-    if (*s != '\0') {
-      *s++ = '\0';
+    if (*ptr != '\0') {
+      *ptr++ = '\0';
     }
   }
-  return token;
+  return tokens;
 }

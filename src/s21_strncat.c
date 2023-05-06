@@ -1,14 +1,10 @@
 #include "s21_string.h"
 
-char *s21_strncat(char *dest, const char *src, s21_size_t n) {
-  char *new_str = dest;
-  while (*new_str != '\0') {
-    new_str++;
-  }
-  for (int i = 0; i < n; i++) {
-    *new_str = *src;
-    src++;
-    new_str++;
+// change to s21_strlen
+char *s21_strncat(char *dest, const char *src, size_t n) {
+  int length = s21_strlen(dest);
+  for (long unsigned int i = 0; i < s21_strlen(src) && i < n; i++) {
+    dest[length + i] = src[i];
   }
   return dest;
 }
